@@ -185,7 +185,10 @@ def _get_all_caps_line_indices(page) -> Set[int]:
 # Name candidate identification
 # ---------------------------------------------------------------------------
 
-def extract_names_from_tokens(tokens: List[StyledToken]) -> List[str]:
+def extract_names_from_tokens(
+    tokens: List[StyledToken],
+    discovery_mode: bool = False,
+) -> List[str]:
     """Scan token sequence and build n-grams of consecutive 'name words'.
 
     Rules:
@@ -195,8 +198,11 @@ def extract_names_from_tokens(tokens: List[StyledToken]) -> List[str]:
       the word is bold/italic.
     - Superscript tokens (footnote numbers) are skipped.
     - Punctuation flushes and breaks the current n-gram.
-    - After sentence-ending punctuation (.?!), the next capitalised word is
-      ignored if it is a common sentence-starter (the, it, he, ...).
+
+    When *discovery_mode* is True (pass 1), ALL sentence-initial capitalised
+    words are skipped so that only names confirmed by mid-sentence usage
+    enter the vocabulary.  When False (legacy behaviour), only common
+    sentence-starters in SENTENCE_START_IGNORE are skipped.
     """
     names: List[str] = []
     current_ngram: List[str] = []
@@ -268,12 +274,15 @@ def extract_names_from_tokens(tokens: List[StyledToken]) -> List[str]:
 
         if word[0].isupper():
             # Sentence-initial capitalisation check
-            if after_sentence_end and word_lower in SENTENCE_START_IGNORE:
-                after_sentence_end = False
-                if current_ngram:
-                    names.append(" ".join(current_ngram))
-                    current_ngram = []
-                continue
+            if after_sentence_end:
+                if discovery_mode or word_lower in SENTENCE_START_IGNORE:
+                    # In discovery mode skip ALL sentence-initial caps;
+                    # otherwise only skip common starters.
+                    after_sentence_end = False
+                    if current_ngram:
+                        names.append(" ".join(current_ngram))
+                        current_ngram = []
+                    continue
             is_name_word = True
 
         if is_styled:
@@ -302,6 +311,55 @@ def extract_names_from_tokens(tokens: List[StyledToken]) -> List[str]:
         names.append(" ".join(current_ngram))
 
     return names
+
+
+# ---------------------------------------------------------------------------
+# Known-name search (pass 2)
+# ---------------------------------------------------------------------------
+
+def find_known_names_in_tokens(
+    tokens: List[StyledToken],
+    known_names: Set[str],
+    known_names_lower: Dict[str, str],
+    max_ngram_len: int,
+) -> List[str]:
+    """Find all occurrences of *known_names* in *tokens*, regardless of
+    sentence position.  Returns a list of matched names (original casing
+    from the vocabulary)."""
+
+    # Build a list of "word" tokens (skip punct / superscript / structural)
+    word_tokens: List[str] = []
+    for token in tokens:
+        word = token.text.strip()
+        if not word:
+            continue
+        if token.is_superscript:
+            continue
+        if _is_punctuation(word):
+            # Insert a sentinel to prevent cross-sentence matching
+            word_tokens.append(None)
+            continue
+        word_tokens.append(word)
+
+    found: List[str] = []
+    n_tokens = len(word_tokens)
+
+    for i in range(n_tokens):
+        if word_tokens[i] is None:
+            continue
+        # Try n-grams from longest to shortest for greedy matching
+        for length in range(min(max_ngram_len, n_tokens - i), 0, -1):
+            # Check no sentinel in span
+            span = word_tokens[i:i + length]
+            if None in span:
+                break
+            candidate = " ".join(span)
+            canon = known_names_lower.get(candidate.lower())
+            if canon is not None:
+                found.append(canon)
+                break  # greedy: take longest match starting at i
+
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -460,27 +518,70 @@ class NameIndexingThread(QThread):
         try:
             doc = fitz.open(self.pdf_path)
             total_pages = len(doc)
+
+            # ----------------------------------------------------------
+            # Pass 1 – Discovery  (0-40 %)
+            # Extract names using strict sentence-initial filtering so
+            # only names confirmed by mid-sentence usage enter the vocab.
+            # ----------------------------------------------------------
+            name_vocabulary: Set[str] = set()
+
+            for i in range(total_pages):
+                if not self._is_running:
+                    break
+
+                page = doc.load_page(i)
+                tokens = extract_styled_tokens(page)
+                raw_names = extract_names_from_tokens(tokens, discovery_mode=True)
+                names = filter_names(raw_names)
+                name_vocabulary.update(names)
+
+                progress = int((i + 1) / total_pages * 40)
+                self.progress_updated.emit(progress)
+
+            if not self._is_running:
+                doc.close()
+                return
+
+            if not name_vocabulary:
+                doc.close()
+                self.progress_updated.emit(100)
+                self.indexing_finished.emit({}, {})
+                return
+
+            # Build lookup structures for pass 2
+            known_names_lower: Dict[str, str] = {}
+            max_ngram_len = 1
+            for name in name_vocabulary:
+                known_names_lower[name.lower()] = name
+                max_ngram_len = max(max_ngram_len, len(name.split()))
+
+            # ----------------------------------------------------------
+            # Pass 2 – Indexing  (40-75 %)
+            # Search every page for ALL occurrences of known names,
+            # including those at the start of sentences.
+            # ----------------------------------------------------------
             all_occurrences: Dict[str, List[Tuple[int, str]]] = defaultdict(list)
 
-            # Phase 1: extract names from every page  (0-70 %)
             for i in range(total_pages):
                 if not self._is_running:
                     break
 
                 page = doc.load_page(i)
                 page_label = self._compute_label(page, i)
-
                 tokens = extract_styled_tokens(page)
-                raw_names = extract_names_from_tokens(tokens)
-                names = filter_names(raw_names)
+
+                found_names = find_known_names_in_tokens(
+                    tokens, name_vocabulary, known_names_lower, max_ngram_len,
+                )
 
                 seen_on_page: Set[str] = set()
-                for name in names:
+                for name in found_names:
                     if name not in seen_on_page:
                         seen_on_page.add(name)
                         all_occurrences[name].append((i, page_label))
 
-                progress = int((i + 1) / total_pages * 70)
+                progress = 40 + int((i + 1) / total_pages * 35)
                 self.progress_updated.emit(progress)
 
             doc.close()
@@ -488,11 +589,13 @@ class NameIndexingThread(QThread):
             if not self._is_running:
                 return
 
-            # Phase 2: n-gram consolidation  (70-90 %)
-            self.progress_updated.emit(75)
+            # ----------------------------------------------------------
+            # Phase 3 – N-gram consolidation  (75-90 %)
+            # ----------------------------------------------------------
+            self.progress_updated.emit(80)
             groups = build_ngram_groups(all_occurrences)
 
-            self.progress_updated.emit(80)
+            self.progress_updated.emit(85)
 
             raw_results: Dict[str, List[Tuple[int, str]]] = {}
             for group in groups:
@@ -501,7 +604,7 @@ class NameIndexingThread(QThread):
 
             self.progress_updated.emit(90)
 
-            # Phase 3: format using the existing range-compression helper
+            # Phase 4: format using the existing range-compression helper
             from model.indexer import IndexingThread
             formatted_results = IndexingThread.process_results(
                 None, raw_results, capitalize_keys=False
