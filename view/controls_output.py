@@ -98,8 +98,12 @@ class ControlsOutput(QWidget):
         
         # Options
         self.capitalize_chk = QCheckBox("Capitalize Entries")
-        self.capitalize_chk.setChecked(False) # Default based on req
+        self.capitalize_chk.setChecked(False)
         self.controls_layout.addWidget(self.capitalize_chk)
+
+        self.name_indexing_chk = QCheckBox("Name Indexing")
+        self.name_indexing_chk.setChecked(False)
+        self.controls_layout.addWidget(self.name_indexing_chk)
 
         self.create_btn = QPushButton("Create Index")
         self.create_btn.clicked.connect(self.create_index_requested.emit)
@@ -238,4 +242,5 @@ class ControlsOutput(QWidget):
             
         # Set Options
         self.capitalize_chk.setChecked(config.get("capitalize", False))
+        self.name_indexing_chk.setChecked(config.get("name_indexing", False))
         self.view_source_chk.setChecked(config.get("view_source", False))

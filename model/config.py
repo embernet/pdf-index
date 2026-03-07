@@ -9,7 +9,8 @@ class ConfigManager:
         "view_mode": "markdown",
         "capitalize": False,
         "view_source": False,
-        "fit_width": False
+        "fit_width": True,
+        "name_indexing": False
     }
 
     @staticmethod

@@ -5,6 +5,7 @@ from view.main_window import MainWindow
 from model.indexer import IndexingThread
 from model.app_config import AppConfigManager
 from model.tag_cloud import TagCloudThread
+from model.name_indexer import NameIndexingThread
 from PyQt6.QtWidgets import QFileDialog, QApplication
 
 class MainController:
@@ -13,7 +14,14 @@ class MainController:
         self.project_path = None
         self.current_pdf_path = None
         self.indexing_thread = None
+        self.name_indexing_thread = None
         self.tag_cloud_thread = None
+
+        # Dual-thread merge state
+        self._keyword_indexing_done = True
+        self._name_indexing_done = True
+        self._pending_keyword_raw = None
+        self._pending_name_raw = None
 
         # Connect signals
         self.view.action_new_project.triggered.connect(self.create_project)
@@ -39,6 +47,7 @@ class MainController:
         self.view.controls_output.radio_logical.toggled.connect(lambda: self.save_current_config())
         self.view.controls_output.offset_spin.valueChanged.connect(lambda: self.save_current_config())
         self.view.pdf_viewer.fit_width_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.controls_output.name_indexing_chk.toggled.connect(lambda: self.save_current_config())
         
         # Active Link Click / Cloud Click
         self.view.controls_output.active_link_clicked.connect(self.on_active_link_clicked)
@@ -82,7 +91,7 @@ class MainController:
         
         # Set UI State
         self.view.controls_output.set_state(config)
-        self.view.pdf_viewer.set_fit_width(config.get("fit_width", False))
+        self.view.pdf_viewer.set_fit_width(config.get("fit_width", True))
         
         # Load PDF
         pdf_name = config.get("pdf_filename")
@@ -128,7 +137,8 @@ class MainController:
             "view_mode": mode,
             "capitalize": ctrl.capitalize_chk.isChecked(),
             "view_source": ctrl.view_source_chk.isChecked(),
-            "fit_width": viewer.fit_width_chk.isChecked()
+            "fit_width": viewer.fit_width_chk.isChecked(),
+            "name_indexing": ctrl.name_indexing_chk.isChecked()
         }
         
         from model.config import ConfigManager
@@ -203,10 +213,13 @@ class MainController:
         if not self.current_pdf_path:
             self.view.show_error("No PDF loaded.")
             return
-        
+
         keywords = self.view.keyword_editor.get_keywords()
-        if not keywords:
-            self.view.show_error("No keywords defined.")
+        name_indexing_enabled = self.view.controls_output.name_indexing_chk.isChecked()
+        has_keywords = bool([k for k in keywords if k.strip()])
+
+        if not has_keywords and not name_indexing_enabled:
+            self.view.show_error("No keywords defined and name indexing is off.")
             return
 
         strategy = self.view.controls_output.get_strategy()
@@ -216,19 +229,82 @@ class MainController:
         self.view.controls_output.progress_bar.setValue(0)
         self.view.controls_output.progress_bar.setVisible(True)
 
-        self.indexing_thread = IndexingThread(self.current_pdf_path, keywords, strategy, offset)
-        self.indexing_thread.progress_updated.connect(self.view.controls_output.set_progress)
-        self.indexing_thread.indexing_finished.connect(self.on_indexing_finished)
-        self.indexing_thread.error_occurred.connect(self.on_indexing_error)
-        self.indexing_thread.start()
+        # Reset merge state
+        self._pending_keyword_raw = None
+        self._pending_name_raw = None
+        self._keyword_indexing_done = not has_keywords
+        self._name_indexing_done = not name_indexing_enabled
+
+        # Start keyword indexing (if keywords exist)
+        if has_keywords:
+            self.indexing_thread = IndexingThread(
+                self.current_pdf_path, keywords, strategy, offset
+            )
+            self.indexing_thread.progress_updated.connect(
+                self.view.controls_output.set_progress
+            )
+            self.indexing_thread.indexing_finished.connect(
+                self._on_keyword_indexing_finished
+            )
+            self.indexing_thread.error_occurred.connect(self.on_indexing_error)
+            self.indexing_thread.start()
+
+        # Start name indexing (if enabled)
+        if name_indexing_enabled:
+            self.name_indexing_thread = NameIndexingThread(
+                self.current_pdf_path, strategy, offset
+            )
+            # Only connect progress if keyword thread is not also running
+            if not has_keywords:
+                self.name_indexing_thread.progress_updated.connect(
+                    self.view.controls_output.set_progress
+                )
+            self.name_indexing_thread.indexing_finished.connect(
+                self._on_name_indexing_finished
+            )
+            self.name_indexing_thread.error_occurred.connect(self.on_indexing_error)
+            self.name_indexing_thread.start()
 
     def on_indexing_error(self, message):
         self.view.show_error(f"Indexing failed: {message}")
         self.view.controls_output.create_btn.setEnabled(True)
+        self.view.controls_output.progress_bar.setVisible(False)
 
-    def on_indexing_finished(self, formatted_results, raw_results):
+    def _on_keyword_indexing_finished(self, formatted_results, raw_results):
+        self._pending_keyword_raw = raw_results
+        self._keyword_indexing_done = True
+        self._try_merge_results()
+
+    def _on_name_indexing_finished(self, formatted_results, raw_results):
+        self._pending_name_raw = raw_results
+        self._name_indexing_done = True
+        self._try_merge_results()
+
+    def _try_merge_results(self):
+        """Merge keyword and name results once both threads are done."""
+        if not self._keyword_indexing_done or not self._name_indexing_done:
+            return
+
+        merged_raw = {}
+
+        if self._pending_keyword_raw:
+            for key, pages in self._pending_keyword_raw.items():
+                merged_raw[key] = list(pages)
+
+        if self._pending_name_raw:
+            for key, pages in self._pending_name_raw.items():
+                if key in merged_raw:
+                    # Merge page lists, deduplicate by page index
+                    existing_indices = {p[0] for p in merged_raw[key]}
+                    for page in pages:
+                        if page[0] not in existing_indices:
+                            merged_raw[key].append(page)
+                    merged_raw[key].sort(key=lambda x: x[0])
+                else:
+                    merged_raw[key] = list(pages)
+
         self.view.controls_output.create_btn.setEnabled(True)
-        self.last_raw_results = raw_results
+        self.last_raw_results = merged_raw
         self.process_and_display_results()
 
     def update_output_display_toggle(self, _):
