@@ -7,23 +7,31 @@ class ClickableLabel(QLabel):
     # Signals for selection
     selection_changed = pyqtSignal()
     word_double_clicked = pyqtSignal(str)
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.selection_start_index = None
         self.selection_end_index = None
         self.is_selecting = False
-        
+
         # Word data: list of tuples (x0, y0, x1, y1, word_string, block_no, line_no, word_no)
         # Coordinates are in PDF points (unscaled)
-        self.words = [] 
+        self.words = []
         self.current_zoom = 1.0
+
+        # Highlight data: list of word indices to highlight (yellow)
+        self.highlight_indices = []
 
     def set_words(self, words, zoom):
         self.words = words
         self.current_zoom = zoom
         self.selection_start_index = None
         self.selection_end_index = None
+        self.highlight_indices = []
+        self.update()
+
+    def set_highlights(self, indices):
+        self.highlight_indices = indices
         self.update()
 
     def get_word_at_pos(self, pos):
@@ -102,29 +110,42 @@ class ClickableLabel(QLabel):
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        
-        if self.selection_start_index is not None and self.selection_end_index is not None:
-            painter = QPainter(self)
+
+        pixmap = self.pixmap()
+        if not pixmap:
+            return
+
+        x_off = (self.width() - pixmap.width()) // 2
+        y_off = (self.height() - pixmap.height()) // 2
+
+        painter = QPainter(self)
+
+        # Draw yellow highlights (search term matches)
+        if self.highlight_indices:
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(0, 120, 215, 80)) # Blue selection
-            
-            pixmap = self.pixmap()
-            if not pixmap: return
-            
-            x_off = (self.width() - pixmap.width()) // 2
-            y_off = (self.height() - pixmap.height()) // 2
-            
-            start = min(self.selection_start_index, self.selection_end_index)
-            end = max(self.selection_start_index, self.selection_end_index)
-            
-            for i in range(start, end + 1):
+            painter.setBrush(QColor(255, 255, 0, 100))
+            for i in self.highlight_indices:
                 w = self.words[i]
-                # Scale rect to view
                 x = w[0] * self.current_zoom + x_off
                 y = w[1] * self.current_zoom + y_off
                 w_curr = (w[2] - w[0]) * self.current_zoom
                 h_curr = (w[3] - w[1]) * self.current_zoom
-                
+                painter.drawRect(QRectF(x, y, w_curr, h_curr))
+
+        # Draw blue selection
+        if self.selection_start_index is not None and self.selection_end_index is not None:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 120, 215, 80))
+
+            start = min(self.selection_start_index, self.selection_end_index)
+            end = max(self.selection_start_index, self.selection_end_index)
+
+            for i in range(start, end + 1):
+                w = self.words[i]
+                x = w[0] * self.current_zoom + x_off
+                y = w[1] * self.current_zoom + y_off
+                w_curr = (w[2] - w[0]) * self.current_zoom
+                h_curr = (w[3] - w[1]) * self.current_zoom
                 painter.drawRect(QRectF(x, y, w_curr, h_curr))
 
 
@@ -213,11 +234,41 @@ class PDFViewer(QWidget):
             self.update_view()
             self.update_controls()
             
-    def jump_to_page(self, index):
+    def jump_to_page(self, index, highlight_term=None):
         if self.doc and 0 <= index < len(self.doc):
             self.current_page_index = index
             self.update_view()
             self.update_controls()
+            if highlight_term:
+                self.highlight_term(highlight_term)
+
+    def highlight_term(self, term):
+        """Highlight all occurrences of term on the current page."""
+        import unicodedata
+        term_normalized = unicodedata.normalize("NFKC", term).lower()
+        term_words = term_normalized.split()
+
+        words = self.image_label.words
+        if not words or not term_words:
+            return
+
+        indices = []
+        n = len(term_words)
+
+        for i in range(len(words) - n + 1):
+            match = True
+            for j in range(n):
+                word_text = unicodedata.normalize("NFKC", words[i + j][4]).lower()
+                # Strip punctuation for matching
+                word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
+                target_stripped = term_words[j].strip('.,;:!?()[]{}"\'-/')
+                if word_stripped != target_stripped:
+                    match = False
+                    break
+            if match:
+                indices.extend(range(i, i + n))
+
+        self.image_label.set_highlights(indices)
 
     def set_fit_width(self, enabled):
         self.fit_width_chk.setChecked(enabled)

@@ -423,8 +423,10 @@ class MainController:
 
     def on_active_link_clicked(self, link_str):
         try:
-            page_idx = int(link_str)
-            self.view.pdf_viewer.jump_to_page(page_idx)
+            parts = link_str.split("|", 1)
+            page_idx = int(parts[0])
+            keyword = parts[1] if len(parts) > 1 else None
+            self.view.pdf_viewer.jump_to_page(page_idx, highlight_term=keyword)
         except ValueError:
             pass
 
@@ -484,13 +486,13 @@ class MainController:
                 start_idx, start_lbl = r[0]
                 end_idx, end_lbl = r[-1]
                 
-                # Format: <a href="#IDX">LBL</a>
-                s_link = f'<a href="#{start_idx}">{start_lbl}</a>'
-                
+                # Format: <a href="#IDX|KEYWORD">LBL</a>
+                s_link = f'<a href="#{start_idx}|{kw}">{start_lbl}</a>'
+
                 if len(r) == 1:
                     link_strings.append(s_link)
                 else:
-                    e_link = f'<a href="#{end_idx}">{end_lbl}</a>'
+                    e_link = f'<a href="#{end_idx}|{kw}">{end_lbl}</a>'
                     link_strings.append(f"{s_link}-{e_link}")
             
             lines.append(f"<div><b>{display_kw}</b>: {', '.join(link_strings)}</div>")
