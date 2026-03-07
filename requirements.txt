@@ -1,0 +1,5 @@
+PyQt6
+PyMuPDF
+numpy
+pillow
+wordcloud
