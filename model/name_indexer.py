@@ -127,6 +127,37 @@ DEFAULT_STOPWORDS = {
     "early", "late",
 }
 
+# Common English words that appear in organisation / place / event names
+# but are NOT plausible surnames.  Used by format_name_entry to avoid
+# inverting names like "Dublin International" → "International, Dublin".
+NON_PERSON_NAME_WORDS = {
+    # Geographic / directional
+    "north", "south", "east", "west", "northern", "southern",
+    "eastern", "western", "central", "upper", "lower", "greater",
+    "new", "old", "grand", "great", "little", "big",
+    "saint", "mount", "lake", "river", "island", "bay",
+    "cape", "fort", "point", "springs", "falls", "valley",
+    "hills", "heights", "forest", "beach", "harbor", "harbour",
+    # Organisational / institutional
+    "international", "national", "federal", "royal", "general",
+    "united", "american", "british", "european", "african", "asian",
+    "university", "institute", "foundation", "association",
+    "corporation", "committee", "commission", "council",
+    "department", "ministry", "academy", "society", "organization",
+    "organisation", "company", "group", "club", "museum", "library",
+    "hospital", "church", "school", "college", "centre", "center",
+    "theatre", "theater", "gallery", "stadium", "memorial",
+    "monument", "prize", "award", "festival", "competition",
+    "conference", "congress", "summit", "forum", "olympic",
+    # Infrastructure
+    "street", "road", "avenue", "boulevard", "square", "bridge",
+    "station", "airport", "port", "building", "tower", "palace",
+    "castle", "cathedral", "park",
+    # Political / administrative
+    "state", "city", "county", "district", "republic", "kingdom",
+    "empire", "province", "territory",
+}
+
 # Regex for detecting Roman numerals.
 _ROMAN_RE = re.compile(r'^[IVXLCDM]+$')
 
@@ -163,6 +194,16 @@ class NameGroup:
 def _is_punctuation(text: str) -> bool:
     """Return True if *text* consists entirely of punctuation characters."""
     return all(unicodedata.category(ch).startswith('P') or ch in '()[]{}' for ch in text)
+
+
+def _last_text_char(block) -> str:
+    """Return the last non-whitespace character in a text block, or ''."""
+    for line in reversed(block.get("lines", [])):
+        for span in reversed(line.get("spans", [])):
+            text = span.get("text", "").rstrip()
+            if text:
+                return text[-1]
+    return ''
 
 
 def _is_all_caps_word(word: str) -> bool:
@@ -226,6 +267,16 @@ def extract_styled_tokens(page) -> List[StyledToken]:
                         line_w = last_bbox[2] - last_bbox[0]
                         if line_w >= col_width * 0.9:
                             insert_sep = False
+
+            # Only insert a synthetic sentence-end when the previous
+            # block's text actually ends with sentence-ending punctuation.
+            # Many PDFs split a single sentence or phrase across blocks
+            # (e.g. "Dublin International" / "Piano Competition"); blindly
+            # inserting "." would break legitimate multi-word names.
+            if insert_sep:
+                last_ch = _last_text_char(prev_block)
+                if last_ch and last_ch not in SENTENCE_END_CHARS:
+                    insert_sep = False
 
             if insert_sep:
                 tokens.append(StyledToken(
@@ -317,8 +368,10 @@ def extract_names_from_tokens(
     mid-sentence usage enter the vocabulary.  When False, only common
     sentence-starters in SENTENCE_START_IGNORE are skipped.
 
-    *exclude_words* is a set of lowercased words that always break the n-gram
-    (user-supplied exclusion list).
+    *exclude_words* is a set of lowercased words the user wants excluded from
+    the index.  An excluded word may still appear INSIDE a multi-word name
+    (e.g. "piano" excluded, but "Dublin International Piano Competition"
+    stays intact).  Standalone excluded entries are removed later.
 
     *stopwords* is a set of lowercased words that are prevented from starting
     a new n-gram (but may extend an existing one).
@@ -356,11 +409,20 @@ def extract_names_from_tokens(
         word_lower = word.lower()
         is_styled = (token.is_bold and include_bold) or token.is_italic
 
-        # Filter: user-excluded words (always break n-gram)
+        # Filter: user-excluded words.
+        # Excluded words may still appear INSIDE multi-word names (e.g.
+        # "piano" is excluded but "Dublin International Piano Competition"
+        # should stay as one entry).  So excluded words extend an existing
+        # n-gram (like stopwords) but never start one.  Standalone
+        # excluded entries are removed after consolidation.
         if word_lower in exclude_words:
-            if current_ngram:
-                names.append(" ".join(current_ngram))
-                current_ngram = []
+            if current_ngram and word[0].isupper():
+                # Mid-name: keep building (will be filtered later if standalone)
+                current_ngram.append(word)
+            else:
+                if current_ngram:
+                    names.append(" ".join(current_ngram))
+                    current_ngram = []
             after_sentence_end = False
             continue
 
@@ -633,9 +695,16 @@ def resolve_group_pages(
 
 
 def format_name_entry(name: str) -> str:
-    """Format for index display.  Two-word names become 'Surname, Firstname'."""
+    """Format for index display.
+
+    Two-word names that look like person names become 'Surname, Firstname'.
+    Names containing common organisational / geographical words (e.g.
+    "Dublin International", "National Museum") are left in natural order.
+    """
     words = name.split()
     if len(words) == 2:
+        if any(w.lower() in NON_PERSON_NAME_WORDS for w in words):
+            return name
         return f"{words[1]}, {words[0]}"
     return name
 
