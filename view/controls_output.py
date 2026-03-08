@@ -73,6 +73,7 @@ class ControlsOutput(QWidget):
     active_link_clicked = pyqtSignal(str) # Emits page number string or cloud action
     cloud_word_clicked = pyqtSignal(str)
     exclude_entry_requested = pyqtSignal(str)
+    merge_entry_requested = pyqtSignal(str)   # source keyword to merge
 
     def __init__(self):
         super().__init__()
@@ -296,14 +297,21 @@ class ControlsOutput(QWidget):
 
         if keyword:
             first = menu.actions()[0] if menu.actions() else None
+
+            merge_action = QAction(f'Merge "{keyword}" into…', self)
+            merge_action.triggered.connect(
+                lambda checked, k=keyword: self.merge_entry_requested.emit(k)
+            )
             exclude_action = QAction(f'Exclude "{keyword}"', self)
             exclude_action.triggered.connect(
                 lambda checked, k=keyword: self.exclude_entry_requested.emit(k)
             )
             if first:
+                menu.insertAction(first, merge_action)
                 menu.insertAction(first, exclude_action)
                 menu.insertSeparator(first)
             else:
+                menu.addAction(merge_action)
                 menu.addAction(exclude_action)
 
         menu.exec(self.output_text.mapToGlobal(pos))

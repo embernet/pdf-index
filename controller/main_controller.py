@@ -56,6 +56,9 @@ class MainController:
         self.view.exclude_editor.save_requested.connect(self.save_excludes)
         self.view.controls_output.exclude_entry_requested.connect(self.exclude_entry)
 
+        # Merge entries
+        self.view.controls_output.merge_entry_requested.connect(self.on_merge_entry_requested)
+
         # Stopwords Editor
         self.view.stopwords_editor.save_requested.connect(self.save_stopwords)
 
@@ -138,6 +141,7 @@ class MainController:
             try:
                 with open(index_path, 'r', encoding='utf-8') as f:
                     self.last_raw_results = json.load(f)
+                self._apply_merge_mappings()
                 self.process_and_display_results()
                 self._auto_highlight_current_page()
             except Exception as e:
@@ -302,6 +306,95 @@ class MainController:
     def exclude_entry(self, keyword):
         self.view.exclude_editor.add_word(keyword)
 
+    # ------------------------------------------------------------------
+    # Merge entries
+    # ------------------------------------------------------------------
+
+    def _merges_path(self):
+        if not self.project_path:
+            return None
+        return os.path.join(self.project_path, "merges.json")
+
+    def _load_merge_mappings(self) -> dict:
+        path = self._merges_path()
+        if path and os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_merge_mappings(self, mappings: dict):
+        path = self._merges_path()
+        if path:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(mappings, f, indent=2)
+
+    def _apply_merge_mappings(self):
+        """Apply saved merge mappings to self.last_raw_results in-place."""
+        if not self.last_raw_results:
+            return
+        mappings = self._load_merge_mappings()
+        if not mappings:
+            return
+        for source, target in list(mappings.items()):
+            if source not in self.last_raw_results:
+                continue
+            if target not in self.last_raw_results:
+                # Target gone (renamed / excluded) — skip stale mapping
+                continue
+            # Merge source pages into target
+            existing_indices = {p[0] for p in self.last_raw_results[target]}
+            for p in self.last_raw_results[source]:
+                if p[0] not in existing_indices:
+                    self.last_raw_results[target].append(p)
+                    existing_indices.add(p[0])
+            self.last_raw_results[target].sort(key=lambda x: x[0])
+            del self.last_raw_results[source]
+
+    def on_merge_entry_requested(self, source):
+        """Show dialog to pick a target term, then merge *source* into it."""
+        from PyQt6.QtWidgets import QInputDialog
+
+        if not self.last_raw_results or source not in self.last_raw_results:
+            return
+
+        candidates = sorted(
+            [k for k in self.last_raw_results if k != source],
+            key=lambda x: x.lower(),
+        )
+        if not candidates:
+            return
+
+        target, ok = QInputDialog.getItem(
+            self.view,
+            "Merge Entry",
+            f'Merge "{source}" into:',
+            candidates,
+            editable=False,
+        )
+        if not ok or not target:
+            return
+
+        # Perform the merge on live results
+        existing_indices = {p[0] for p in self.last_raw_results[target]}
+        for p in self.last_raw_results[source]:
+            if p[0] not in existing_indices:
+                self.last_raw_results[target].append(p)
+                existing_indices.add(p[0])
+        self.last_raw_results[target].sort(key=lambda x: x[0])
+        del self.last_raw_results[source]
+
+        # Persist the mapping
+        mappings = self._load_merge_mappings()
+        mappings[source] = target
+        self._save_merge_mappings(mappings)
+
+        # Refresh display
+        self.process_and_display_results()
+        self._auto_highlight_current_page()
+
     def add_keyword_from_selection(self, text):
         # Strip trailing punctuation
         text = text.rstrip(string.punctuation)
@@ -420,6 +513,8 @@ class MainController:
 
         self.view.controls_output.create_btn.setEnabled(True)
         self.last_raw_results = merged_raw
+        # Apply any saved user merges (e.g. "Paul" → "Smith, Paul")
+        self._apply_merge_mappings()
         self.process_and_display_results()
         # Apply auto-highlight to current page now that index is available
         self._auto_highlight_current_page()

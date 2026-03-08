@@ -26,6 +26,9 @@ class ClickableLabel(QLabel):
         self.highlight_term_map = {}
         # Accent highlights: word indices drawn in orange (for the focused term)
         self.accent_indices = []
+        # Search highlights: rects in PDF coords as (x0, y0, x1, y1) tuples
+        self.search_rects = []
+        self.current_search_rect = None
 
     def set_words(self, words, zoom):
         self.words = words
@@ -43,6 +46,11 @@ class ClickableLabel(QLabel):
 
     def set_accent_highlights(self, indices):
         self.accent_indices = indices
+        self.update()
+
+    def set_search_highlights(self, rects, current_rect=None):
+        self.search_rects = rects
+        self.current_search_rect = current_rect
         self.update()
 
     def get_word_at_pos(self, pos):
@@ -165,6 +173,30 @@ class ClickableLabel(QLabel):
                 h_curr = (w[3] - w[1]) * self.current_zoom
                 painter.drawRect(QRectF(x, y, w_curr, h_curr))
 
+        # Draw search result highlights (light cyan)
+        if self.search_rects:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 200, 255, 80))
+            for r in self.search_rects:
+                if r == self.current_search_rect:
+                    continue
+                x = r[0] * self.current_zoom + x_off
+                y = r[1] * self.current_zoom + y_off
+                w_r = (r[2] - r[0]) * self.current_zoom
+                h_r = (r[3] - r[1]) * self.current_zoom
+                painter.drawRect(QRectF(x, y, w_r, h_r))
+
+        # Draw current search match (orange, more prominent)
+        if self.current_search_rect:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(255, 140, 0, 150))
+            r = self.current_search_rect
+            x = r[0] * self.current_zoom + x_off
+            y = r[1] * self.current_zoom + y_off
+            w_r = (r[2] - r[0]) * self.current_zoom
+            h_r = (r[3] - r[1]) * self.current_zoom
+            painter.drawRect(QRectF(x, y, w_r, h_r))
+
         # Draw blue selection
         if self.selection_start_index is not None and self.selection_end_index is not None:
             painter.setPen(Qt.PenStyle.NoPen)
@@ -246,6 +278,40 @@ class PDFViewer(QWidget):
         self.toolbar2_layout.addWidget(goto_label)
         self.toolbar2_layout.addWidget(self.goto_edit)
         self.layout.addLayout(self.toolbar2_layout)
+
+        # Search bar
+        self.search_bar_layout = QHBoxLayout()
+        self.pdf_search_input = QLineEdit()
+        self.pdf_search_input.setPlaceholderText("Search in PDF...")
+        self.pdf_search_input.setClearButtonEnabled(True)
+        self.pdf_search_input.returnPressed.connect(self._do_search)
+        self.pdf_search_input.textChanged.connect(self._on_search_text_changed)
+
+        self.search_count_label = QLabel("")
+        self.search_count_label.setStyleSheet("color: gray;")
+
+        self.search_prev_btn = QPushButton("\u25b2")
+        self.search_prev_btn.setToolTip("Previous match")
+        self.search_prev_btn.setFixedWidth(28)
+        self.search_prev_btn.setEnabled(False)
+        self.search_prev_btn.clicked.connect(self._search_prev)
+
+        self.search_next_btn = QPushButton("\u25bc")
+        self.search_next_btn.setToolTip("Next match")
+        self.search_next_btn.setFixedWidth(28)
+        self.search_next_btn.setEnabled(False)
+        self.search_next_btn.clicked.connect(self._search_next)
+
+        self.search_bar_layout.addWidget(self.pdf_search_input)
+        self.search_bar_layout.addWidget(self.search_count_label)
+        self.search_bar_layout.addWidget(self.search_prev_btn)
+        self.search_bar_layout.addWidget(self.search_next_btn)
+        self.layout.addLayout(self.search_bar_layout)
+
+        # Search state
+        self._search_matches = []  # list of (page_idx, (x0, y0, x1, y1))
+        self._search_current_idx = -1
+        self._search_text = ""
 
         # Scroll Area for PDF Page
         self.scroll_area = QScrollArea()
@@ -336,6 +402,8 @@ class PDFViewer(QWidget):
                 self.doc.close()
             self.doc = fitz.open(file_path)
             self.current_page_index = 0
+            self._clear_search()
+            self.pdf_search_input.clear()
             self.update_view()
             self.update_controls()
             # Deferred re-render: layout may not be settled yet,
@@ -351,6 +419,8 @@ class PDFViewer(QWidget):
         if self.doc:
             self.doc.close()
             self.doc = None
+        self._clear_search()
+        self.pdf_search_input.clear()
         self.image_label.clear()
         self.image_label.set_words([], 1.0)
         self.page_label.setText("No PDF loaded")
@@ -399,7 +469,7 @@ class PDFViewer(QWidget):
         if not words or not term:
             return
 
-        term_normalized = unicodedata.normalize("NFKC", term).lower()
+        term_normalized = unicodedata.normalize("NFKC", term)
 
         # Build search variants: original term + reversed "Last, First" → "First Last"
         search_variants = [term_normalized.split()]
@@ -417,11 +487,17 @@ class PDFViewer(QWidget):
             for i in range(len(words) - n + 1):
                 match = True
                 for j in range(n):
-                    word_text = unicodedata.normalize("NFKC", words[i + j][4]).lower()
+                    word_text = unicodedata.normalize("NFKC", words[i + j][4])
                     # Strip punctuation for matching
                     word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
                     target_stripped = term_words[j].strip('.,;:!?()[]{}"\'-/')
-                    if word_stripped != target_stripped:
+                    # Case-aware: if indexed term word starts uppercase,
+                    # the PDF word must also start uppercase.
+                    if target_stripped and target_stripped[0].isupper():
+                        if not word_stripped or not word_stripped[0].isupper():
+                            match = False
+                            break
+                    if word_stripped.lower() != target_stripped.lower():
                         match = False
                         break
                 if match:
@@ -460,6 +536,115 @@ class PDFViewer(QWidget):
         except ValueError:
             pass
 
+    # ------------------------------------------------------------------
+    # PDF text search
+    # ------------------------------------------------------------------
+
+    def _do_search(self):
+        """Search the PDF for the entered text (triggered on Return)."""
+        text = self.pdf_search_input.text().strip()
+        if not text or not self.doc:
+            self._clear_search()
+            return
+
+        if text != self._search_text:
+            # New search – collect all matches across all pages
+            self._search_text = text
+            self._search_matches = []
+            for page_idx in range(len(self.doc)):
+                page = self.doc.load_page(page_idx)
+                rects = page.search_for(text)
+                for rect in rects:
+                    self._search_matches.append(
+                        (page_idx, (rect.x0, rect.y0, rect.x1, rect.y1))
+                    )
+
+            if not self._search_matches:
+                self.search_count_label.setText("No matches")
+                self.search_prev_btn.setEnabled(False)
+                self.search_next_btn.setEnabled(False)
+                self.image_label.set_search_highlights([], None)
+                return
+
+            # Start from first match on or after the current page
+            self._search_current_idx = 0
+            for i, (pg, _) in enumerate(self._search_matches):
+                if pg >= self.current_page_index:
+                    self._search_current_idx = i
+                    break
+
+            self._go_to_search_match()
+        else:
+            # Same text, advance to next match
+            self._search_next()
+
+    def _search_next(self):
+        if not self._search_matches:
+            return
+        self._search_current_idx = (self._search_current_idx + 1) % len(self._search_matches)
+        self._go_to_search_match()
+
+    def _search_prev(self):
+        if not self._search_matches:
+            return
+        self._search_current_idx = (self._search_current_idx - 1) % len(self._search_matches)
+        self._go_to_search_match()
+
+    def _go_to_search_match(self):
+        idx = self._search_current_idx
+        page_idx, rect = self._search_matches[idx]
+
+        self.search_count_label.setText(
+            f"{idx + 1} of {len(self._search_matches)}"
+        )
+        self.search_prev_btn.setEnabled(True)
+        self.search_next_btn.setEnabled(True)
+
+        if page_idx != self.current_page_index:
+            self.current_page_index = page_idx
+            self.update_view()
+            self.update_controls()
+            self.page_changed.emit(self.current_page_index)
+        else:
+            self._update_search_highlights()
+
+        # Scroll to make the match visible
+        y_pixel = rect[1] * self.current_zoom
+        vbar = self.scroll_area.verticalScrollBar()
+        viewport_height = self.scroll_area.viewport().height()
+        vbar.setValue(max(0, int(y_pixel - viewport_height / 3)))
+
+    def _update_search_highlights(self):
+        """Set search highlights for the current page."""
+        if not self._search_matches:
+            self.image_label.set_search_highlights([], None)
+            return
+
+        page_rects = []
+        current_rect = None
+        for i, (pg, rect) in enumerate(self._search_matches):
+            if pg == self.current_page_index:
+                page_rects.append(rect)
+                if i == self._search_current_idx:
+                    current_rect = rect
+
+        self.image_label.set_search_highlights(page_rects, current_rect)
+
+    def _clear_search(self):
+        self._search_text = ""
+        self._search_matches = []
+        self._search_current_idx = -1
+        self.search_count_label.setText("")
+        self.search_prev_btn.setEnabled(False)
+        self.search_next_btn.setEnabled(False)
+        self.image_label.set_search_highlights([], None)
+
+    def _on_search_text_changed(self, text):
+        if not text:
+            self._clear_search()
+
+    # ------------------------------------------------------------------
+
     def highlight_multiple_terms(self, terms):
         """Highlight all occurrences of multiple terms on the current page."""
         import unicodedata
@@ -473,7 +658,7 @@ class PDFViewer(QWidget):
         term_map = {}  # word_index -> original term string
 
         for term in terms:
-            term_normalized = unicodedata.normalize("NFKC", term).lower()
+            term_normalized = unicodedata.normalize("NFKC", term)
 
             # Build search variants: original + reversed "Last, First" -> "First Last"
             search_variants = [term_normalized.split()]
@@ -489,10 +674,16 @@ class PDFViewer(QWidget):
                 for i in range(len(words) - n + 1):
                     match = True
                     for j in range(n):
-                        word_text = unicodedata.normalize("NFKC", words[i + j][4]).lower()
+                        word_text = unicodedata.normalize("NFKC", words[i + j][4])
                         word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
                         target_stripped = term_words[j].strip('.,;:!?()[]{}"\'-/')
-                        if word_stripped != target_stripped:
+                        # Case-aware: if indexed term word starts uppercase,
+                        # the PDF word must also start uppercase.
+                        if target_stripped and target_stripped[0].isupper():
+                            if not word_stripped or not word_stripped[0].isupper():
+                                match = False
+                                break
+                        if word_stripped.lower() != target_stripped.lower():
                             match = False
                             break
                     if match:
@@ -504,20 +695,32 @@ class PDFViewer(QWidget):
 
     def set_accent_term(self, term):
         """Find all occurrences of a single term on the current page and
-        mark them with orange accent highlights (on top of the yellow ones)."""
+        mark them with orange accent highlights (on top of the yellow ones).
+
+        Occurrences that are already claimed by a *different* indexed term
+        (visible in the highlight_term_map built by highlight_multiple_terms)
+        are skipped so that, e.g., clicking "Sound" does not also accent-
+        highlight the "Sound" inside "Sound of Music".
+        """
         import unicodedata
 
         words = self.image_label.words
         if not words or not term:
             return
 
-        term_normalized = unicodedata.normalize("NFKC", term).lower()
+        term_normalized = unicodedata.normalize("NFKC", term)
 
         search_variants = [term_normalized.split()]
         if ", " in term_normalized:
             parts = term_normalized.split(", ", 1)
             reversed_term = parts[1] + " " + parts[0]
             search_variants.append(reversed_term.split())
+
+        # term_map maps word-index → owning term (set by
+        # highlight_multiple_terms).  If a word position already belongs to
+        # a different, longer term we must not accent-highlight it.
+        term_map = getattr(self.image_label, 'highlight_term_map', {})
+        term_lower = term.lower()
 
         indices = []
         for term_words in search_variants:
@@ -527,15 +730,30 @@ class PDFViewer(QWidget):
             for i in range(len(words) - n + 1):
                 match = True
                 for j in range(n):
-                    word_text = unicodedata.normalize("NFKC", words[i + j][4]).lower()
+                    word_text = unicodedata.normalize("NFKC", words[i + j][4])
                     word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
                     target_stripped = term_words[j].strip('.,;:!?()[]{}"\'-/')
-                    if word_stripped != target_stripped:
+                    # Case-aware: if indexed term word starts uppercase,
+                    # the PDF word must also start uppercase.
+                    if target_stripped and target_stripped[0].isupper():
+                        if not word_stripped or not word_stripped[0].isupper():
+                            match = False
+                            break
+                    if word_stripped.lower() != target_stripped.lower():
                         match = False
                         break
                 if match:
+                    # Check that these word positions aren't owned by a
+                    # different (longer) indexed term.
+                    owned_by_other = False
                     for idx in range(i, i + n):
-                        indices.append(idx)
+                        owner = term_map.get(idx, '')
+                        if owner and owner.lower() != term_lower:
+                            owned_by_other = True
+                            break
+                    if not owned_by_other:
+                        for idx in range(i, i + n):
+                            indices.append(idx)
 
         self.image_label.set_accent_highlights(indices)
 
@@ -586,6 +804,10 @@ class PDFViewer(QWidget):
         # get_text("words") returns list of (x0, y0, x1, y1, word, block, line, word)
         words = page.get_text("words")
         self.image_label.set_words(words, zoom)
+
+        # Re-apply search highlights for this page
+        if self._search_matches:
+            self._update_search_highlights()
 
     def show_context_menu(self, pos):
         selected_text = self.image_label.get_selected_text()

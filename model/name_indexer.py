@@ -905,17 +905,34 @@ class NameIndexingThread(QThread):
                 return
 
             # ----------------------------------------------------------
-            # Phase 3 – N-gram consolidation  (75-90 %)
+            # Phase 3 – Format entries  (75-90 %)
+            # Auto-consolidation removed; users can manually merge
+            # related terms via the right-click context menu.
             # ----------------------------------------------------------
             self.progress_updated.emit(80)
-            groups = build_ngram_groups(all_occurrences)
-
-            self.progress_updated.emit(85)
 
             raw_results: Dict[str, List[Tuple[int, str]]] = {}
-            for group in groups:
-                entries = resolve_group_pages(group)
-                raw_results.update(entries)
+            for name, occurrences in all_occurrences.items():
+                display_key = format_name_entry(name)
+                # Deduplicate by page index
+                seen: set = set()
+                deduped: list = []
+                for p in occurrences:
+                    if p[0] not in seen:
+                        seen.add(p[0])
+                        deduped.append(p)
+                deduped.sort(key=lambda x: x[0])
+                # If display-key collision, merge page lists
+                if display_key in raw_results:
+                    existing_indices = {p[0] for p in raw_results[display_key]}
+                    for p in deduped:
+                        if p[0] not in existing_indices:
+                            raw_results[display_key].append(p)
+                    raw_results[display_key].sort(key=lambda x: x[0])
+                else:
+                    raw_results[display_key] = deduped
+
+            self.progress_updated.emit(85)
 
             # Remove any entries matching user-excluded words
             if self.exclude_words:
