@@ -6,11 +6,11 @@ class ConfigManager:
         "pdf_filename": None,
         "strategy": "logical",
         "offset": 1,
-        "view_mode": "markdown",
+        "view_mode": "active",
         "capitalize": False,
         "view_source": False,
         "fit_width": True,
-        "name_indexing": False,
+        "name_indexing": True,
         "bold_indexing": False
     }
 
