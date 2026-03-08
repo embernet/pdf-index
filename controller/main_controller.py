@@ -66,6 +66,9 @@ class MainController:
         self.view.pdf_viewer.page_changed.connect(self._auto_highlight_current_page)
         self.view.pdf_viewer.highlight_indexed_chk.toggled.connect(lambda: self.save_current_config())
 
+        # Click highlighted word in PDF → scroll index to that term
+        self.view.pdf_viewer.index_term_clicked.connect(self._on_index_term_clicked)
+
         # Store last results to allow cheap format switching
         self.last_raw_results = None
         self.last_formatted_results = None
@@ -534,6 +537,11 @@ class MainController:
             page_idx = int(parts[0])
             keyword = parts[1] if len(parts) > 1 else None
             self.view.pdf_viewer.jump_to_page(page_idx, highlight_term=keyword)
+            # After jump_to_page, all indexed terms are highlighted yellow
+            # via _auto_highlight_current_page (triggered by page_changed).
+            # Now overlay the specific clicked term in orange.
+            if keyword:
+                self.view.pdf_viewer.set_accent_term(keyword)
         except ValueError:
             pass
 
@@ -560,6 +568,10 @@ class MainController:
             viewer.highlight_multiple_terms(terms_on_page)
         else:
             viewer.image_label.set_highlights([])
+
+    def _on_index_term_clicked(self, term):
+        """Scroll the output index to the clicked term and highlight it."""
+        self.view.controls_output.scroll_to_term(term)
 
     def generate_markdown(self, results):
         count = len(results)

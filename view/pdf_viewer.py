@@ -1,12 +1,13 @@
 import fitz
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QHBoxLayout, QPushButton, QCheckBox, QMenu, QApplication, QSlider, QLineEdit
 from PyQt6.QtGui import QPixmap, QImage, QAction, QPainter, QPen, QColor, QCursor
-from PyQt6.QtCore import Qt, QRect, pyqtSignal, QPoint, QRectF
+from PyQt6.QtCore import Qt, QRect, pyqtSignal, QPoint, QRectF, QTimer, QEvent
 
 class ClickableLabel(QLabel):
     # Signals for selection
     selection_changed = pyqtSignal()
     word_double_clicked = pyqtSignal(str)
+    highlighted_word_clicked = pyqtSignal(str)  # emits the index term name
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -21,6 +22,10 @@ class ClickableLabel(QLabel):
 
         # Highlight data: list of word indices to highlight (yellow)
         self.highlight_indices = []
+        # Maps highlighted word index → index term that caused it
+        self.highlight_term_map = {}
+        # Accent highlights: word indices drawn in orange (for the focused term)
+        self.accent_indices = []
 
     def set_words(self, words, zoom):
         self.words = words
@@ -30,8 +35,14 @@ class ClickableLabel(QLabel):
         self.highlight_indices = []
         self.update()
 
-    def set_highlights(self, indices):
+    def set_highlights(self, indices, term_map=None):
         self.highlight_indices = indices
+        self.highlight_term_map = term_map or {}
+        self.accent_indices = []
+        self.update()
+
+    def set_accent_highlights(self, indices):
+        self.accent_indices = indices
         self.update()
 
     def get_word_at_pos(self, pos):
@@ -80,6 +91,13 @@ class ClickableLabel(QLabel):
     def mouseReleaseEvent(self, event):
         if self.is_selecting and event.button() == Qt.MouseButton.LeftButton:
             self.is_selecting = False
+            # If it was a click (not a drag) on a highlighted word, emit the term
+            if (self.selection_start_index is not None and
+                    self.selection_start_index == self.selection_end_index and
+                    self.selection_start_index in self.highlight_term_map):
+                self.highlighted_word_clicked.emit(
+                    self.highlight_term_map[self.selection_start_index]
+                )
             self.selection_changed.emit()
 
     def mouseDoubleClickEvent(self, event):
@@ -121,10 +139,25 @@ class ClickableLabel(QLabel):
         painter = QPainter(self)
 
         # Draw yellow highlights (search term matches)
+        accent_set = set(self.accent_indices)
         if self.highlight_indices:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(255, 255, 0, 100))
             for i in self.highlight_indices:
+                if i in accent_set:
+                    continue  # drawn separately in orange
+                w = self.words[i]
+                x = w[0] * self.current_zoom + x_off
+                y = w[1] * self.current_zoom + y_off
+                w_curr = (w[2] - w[0]) * self.current_zoom
+                h_curr = (w[3] - w[1]) * self.current_zoom
+                painter.drawRect(QRectF(x, y, w_curr, h_curr))
+
+        # Draw orange accent highlights (focused term from index click)
+        if self.accent_indices:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(255, 140, 0, 140))
+            for i in self.accent_indices:
                 w = self.words[i]
                 x = w[0] * self.current_zoom + x_off
                 y = w[1] * self.current_zoom + y_off
@@ -152,6 +185,7 @@ class ClickableLabel(QLabel):
 class PDFViewer(QWidget):
     add_keyword_requested = pyqtSignal(str)
     page_changed = pyqtSignal(int)
+    index_term_clicked = pyqtSignal(str)  # emits the index term name
 
     def __init__(self):
         super().__init__()
@@ -175,6 +209,7 @@ class PDFViewer(QWidget):
         self.page_slider.valueChanged.connect(self._on_slider_changed)
 
         self.fit_width_chk = QCheckBox("Fit Width")
+        self.fit_width_chk.setChecked(True)
         self.fit_width_chk.toggled.connect(self.update_view)
 
         self.toolbar_layout.addWidget(self.prev_btn)
@@ -216,6 +251,7 @@ class PDFViewer(QWidget):
         # No selection_made signal anymore, we poll state
         self.image_label.setMouseTracking(False) 
         self.image_label.word_double_clicked.connect(self.add_keyword_requested.emit)
+        self.image_label.highlighted_word_clicked.connect(self.index_term_clicked.emit)
         
         self.scroll_area.setWidget(self.image_label)
         self.layout.addWidget(self.scroll_area)
@@ -223,7 +259,71 @@ class PDFViewer(QWidget):
         # Context Menu
         self.image_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.image_label.customContextMenuRequested.connect(self.show_context_menu)
+
+        # Debounce timer for resize-driven fit-width re-rendering
+        self._resize_timer = QTimer()
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(50)
+        self._resize_timer.timeout.connect(self._on_resize_timeout)
+        self._last_viewport_width = 0
+
+        # Scroll-past-edge page turning
+        self.scroll_area.installEventFilter(self)
+        self._page_turn_cooldown = False
         
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.doc and self.fit_width_chk.isChecked():
+            self._resize_timer.start()
+
+    def _on_resize_timeout(self):
+        """Re-render after resize settles, but only if viewport width changed."""
+        vp_width = self.scroll_area.viewport().width()
+        if vp_width != self._last_viewport_width:
+            self._last_viewport_width = vp_width
+            self.update_view()
+
+    # ------------------------------------------------------------------
+    # Scroll-past-edge → page turn
+    # ------------------------------------------------------------------
+
+    def eventFilter(self, obj, event):
+        if obj is self.scroll_area and event.type() == QEvent.Type.Wheel:
+            if self.doc and not self._page_turn_cooldown:
+                vbar = self.scroll_area.verticalScrollBar()
+                delta = event.angleDelta().y()
+                at_bottom = vbar.value() >= vbar.maximum()
+                at_top = vbar.value() <= vbar.minimum()
+
+                if at_bottom and delta < 0 and self.current_page_index < len(self.doc) - 1:
+                    self._turn_page(self.current_page_index + 1, scroll_to_top=True)
+                    return True  # consume event
+                if at_top and delta > 0 and self.current_page_index > 0:
+                    self._turn_page(self.current_page_index - 1, scroll_to_top=False)
+                    return True
+
+        return super().eventFilter(obj, event)
+
+    def _turn_page(self, new_index, scroll_to_top):
+        self._page_turn_cooldown = True
+        self.current_page_index = new_index
+        self.update_view()
+        self.update_controls()
+        self.page_changed.emit(self.current_page_index)
+
+        vbar = self.scroll_area.verticalScrollBar()
+        if scroll_to_top:
+            vbar.setValue(vbar.minimum())
+        else:
+            vbar.setValue(vbar.maximum())
+
+        QTimer.singleShot(300, self._reset_page_turn_cooldown)
+
+    def _reset_page_turn_cooldown(self):
+        self._page_turn_cooldown = False
+
+    # ------------------------------------------------------------------
+
     def load_document(self, file_path):
         try:
             if self.doc:
@@ -232,6 +332,9 @@ class PDFViewer(QWidget):
             self.current_page_index = 0
             self.update_view()
             self.update_controls()
+            # Deferred re-render: layout may not be settled yet,
+            # so viewport width could be wrong on first render.
+            QTimer.singleShot(0, self.update_view)
             return True
         except Exception as e:
             print(f"Error loading PDF: {e}")
@@ -351,6 +454,7 @@ class PDFViewer(QWidget):
             return
 
         all_indices = set()
+        term_map = {}  # word_index -> original term string
 
         for term in terms:
             term_normalized = unicodedata.normalize("NFKC", term).lower()
@@ -378,8 +482,46 @@ class PDFViewer(QWidget):
                     if match:
                         for idx in range(i, i + n):
                             all_indices.add(idx)
+                            term_map[idx] = term
 
-        self.image_label.set_highlights(sorted(all_indices))
+        self.image_label.set_highlights(sorted(all_indices), term_map)
+
+    def set_accent_term(self, term):
+        """Find all occurrences of a single term on the current page and
+        mark them with orange accent highlights (on top of the yellow ones)."""
+        import unicodedata
+
+        words = self.image_label.words
+        if not words or not term:
+            return
+
+        term_normalized = unicodedata.normalize("NFKC", term).lower()
+
+        search_variants = [term_normalized.split()]
+        if ", " in term_normalized:
+            parts = term_normalized.split(", ", 1)
+            reversed_term = parts[1] + " " + parts[0]
+            search_variants.append(reversed_term.split())
+
+        indices = []
+        for term_words in search_variants:
+            if not term_words:
+                continue
+            n = len(term_words)
+            for i in range(len(words) - n + 1):
+                match = True
+                for j in range(n):
+                    word_text = unicodedata.normalize("NFKC", words[i + j][4]).lower()
+                    word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
+                    target_stripped = term_words[j].strip('.,;:!?()[]{}"\'-/')
+                    if word_stripped != target_stripped:
+                        match = False
+                        break
+                if match:
+                    for idx in range(i, i + n):
+                        indices.append(idx)
+
+        self.image_label.set_accent_highlights(indices)
 
     def set_fit_width(self, enabled):
         self.fit_width_chk.setChecked(enabled)

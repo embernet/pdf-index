@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QProgressBar, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QProgressBar, QTextEdit, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea
 from PyQt6.QtCore import pyqtSignal, Qt, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QAction, QTextCursor
 
@@ -102,24 +102,26 @@ class ControlsOutput(QWidget):
         self.capitalize_chk.setChecked(False)
         self.controls_layout.addWidget(self.capitalize_chk)
 
-        self.name_indexing_chk = QCheckBox("Name Indexing")
-        self.name_indexing_chk.setChecked(False)
-        self.controls_layout.addWidget(self.name_indexing_chk)
-
-        self.create_btn = QPushButton("Create Index")
-        self.create_btn.clicked.connect(self.create_index_requested.emit)
-        self.controls_layout.addWidget(self.create_btn)
-
-        self.entry_count_label = QLabel("")
-        self.controls_layout.addWidget(self.entry_count_label)
-        
         self.layout.addLayout(self.controls_layout)
 
-        # Name indexing options row
+        # Second row: name indexing options, create button, entry count
         self.name_options_layout = QHBoxLayout()
+
+        self.name_indexing_chk = QCheckBox("Name Indexing")
+        self.name_indexing_chk.setChecked(False)
+        self.name_options_layout.addWidget(self.name_indexing_chk)
+
         self.bold_indexing_chk = QCheckBox("Index Bold Text")
         self.bold_indexing_chk.setChecked(False)
         self.name_options_layout.addWidget(self.bold_indexing_chk)
+
+        self.create_btn = QPushButton("Create Index")
+        self.create_btn.clicked.connect(self.create_index_requested.emit)
+        self.name_options_layout.addWidget(self.create_btn)
+
+        self.entry_count_label = QLabel("")
+        self.name_options_layout.addWidget(self.entry_count_label)
+
         self.layout.addLayout(self.name_options_layout)
 
         # Progress Bar
@@ -285,3 +287,29 @@ class ControlsOutput(QWidget):
         self.name_indexing_chk.setChecked(config.get("name_indexing", False))
         self.bold_indexing_chk.setChecked(config.get("bold_indexing", False))
         self.view_source_chk.setChecked(config.get("view_source", False))
+
+    def scroll_to_term(self, term):
+        """Scroll the output view to the given index term and highlight it."""
+        if not self.output_text.isVisible():
+            return
+
+        # Clear any previous extra selections
+        self.output_text.setExtraSelections([])
+
+        # Move cursor to start so we search the whole document
+        cursor = self.output_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        self.output_text.setTextCursor(cursor)
+
+        # Search for the term (case-insensitive by default)
+        if self.output_text.find(term):
+            # find() already selected the text and scrolled to it.
+            # Apply a persistent gold highlight so it stays visible
+            # after the user clicks elsewhere.
+            from PyQt6.QtGui import QTextCharFormat
+            sel = QTextEdit.ExtraSelection()
+            sel.cursor = self.output_text.textCursor()
+            fmt = QTextCharFormat()
+            fmt.setBackground(QColor(255, 200, 50))
+            sel.format = fmt
+            self.output_text.setExtraSelections([sel])
