@@ -479,11 +479,14 @@ class MainController:
              return
 
         keywords = self.view.keyword_editor.get_keywords()
-        
+        exclude_words = {w.lower() for w in self.view.exclude_editor.get_words()}
+        stopwords = {w.lower() for w in self.view.stopwords_editor.get_words()}
+        custom_stopwords = exclude_words | stopwords
+
         self.view.controls_output.progress_bar.setVisible(True)
         self.view.controls_output.progress_bar.setValue(0) # Pulse
-        
-        self.tag_cloud_thread = TagCloudThread(self.current_pdf_path, keywords)
+
+        self.tag_cloud_thread = TagCloudThread(self.current_pdf_path, keywords, custom_stopwords)
         self.tag_cloud_thread.finished.connect(self.on_cloud_generated)
         self.tag_cloud_thread.error.connect(self.on_cloud_error)
         self.tag_cloud_thread.start()

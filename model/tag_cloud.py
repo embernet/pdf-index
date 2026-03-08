@@ -59,10 +59,11 @@ class TagCloudThread(QThread):
     finished = pyqtSignal(object, list, object) # QImage, layout list, WordCloud obj
     error = pyqtSignal(str)
     
-    def __init__(self, pdf_path, existing_keywords):
+    def __init__(self, pdf_path, existing_keywords, custom_stopwords=None):
         super().__init__()
         self.pdf_path = pdf_path
         self.existing_keywords = {k.lower() for k in existing_keywords}
+        self.custom_stopwords = custom_stopwords or set()
 
     def run(self):
         try:
@@ -83,7 +84,7 @@ class TagCloudThread(QThread):
                 height=600, 
                 background_color="white",
                 color_func=color_func,
-                stopwords=STOPWORDS,
+                stopwords=STOPWORDS | self.custom_stopwords,
                 min_font_size=10,
                 max_font_size=100,
                 prefer_horizontal=0.9
