@@ -1,5 +1,5 @@
 import fitz
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QHBoxLayout, QPushButton, QCheckBox, QMenu, QApplication
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QHBoxLayout, QPushButton, QCheckBox, QMenu, QApplication, QSlider
 from PyQt6.QtGui import QPixmap, QImage, QAction, QPainter, QPen, QColor, QCursor
 from PyQt6.QtCore import Qt, QRect, pyqtSignal, QPoint, QRectF
 
@@ -167,15 +167,22 @@ class PDFViewer(QWidget):
         self.next_btn = QPushButton("Next")
         self.page_label = QLabel("No PDF loaded")
         
+        self.page_slider = QSlider(Qt.Orientation.Horizontal)
+        self.page_slider.setMinimum(0)
+        self.page_slider.setMaximum(0)
+        self.page_slider.setEnabled(False)
+        self.page_slider.valueChanged.connect(self._on_slider_changed)
+
         self.fit_width_chk = QCheckBox("Fit Width")
         self.fit_width_chk.toggled.connect(self.update_view)
-        
+
         self.toolbar_layout.addWidget(self.prev_btn)
         self.toolbar_layout.addWidget(self.page_label)
         self.toolbar_layout.addWidget(self.next_btn)
+        self.toolbar_layout.addWidget(self.page_slider, 1)  # stretch factor
         self.toolbar_layout.addWidget(self.fit_width_chk)
         self.layout.addLayout(self.toolbar_layout)
-        
+
         self.prev_btn.clicked.connect(self.prev_page)
         self.next_btn.clicked.connect(self.next_page)
         self.prev_btn.setEnabled(False)
@@ -221,6 +228,8 @@ class PDFViewer(QWidget):
         self.page_label.setText("No PDF loaded")
         self.prev_btn.setEnabled(False)
         self.next_btn.setEnabled(False)
+        self.page_slider.setMaximum(0)
+        self.page_slider.setEnabled(False)
 
     def prev_page(self):
         if self.doc and self.current_page_index > 0:
@@ -234,6 +243,12 @@ class PDFViewer(QWidget):
             self.update_view()
             self.update_controls()
             
+    def _on_slider_changed(self, value):
+        if self.doc and 0 <= value < len(self.doc) and value != self.current_page_index:
+            self.current_page_index = value
+            self.update_view()
+            self.update_controls()
+
     def jump_to_page(self, index, highlight_term=None):
         if self.doc and 0 <= index < len(self.doc):
             self.current_page_index = index
@@ -277,11 +292,19 @@ class PDFViewer(QWidget):
         if not self.doc:
             self.prev_btn.setEnabled(False)
             self.next_btn.setEnabled(False)
+            self.page_slider.setEnabled(False)
             return
 
+        total = len(self.doc)
         self.prev_btn.setEnabled(self.current_page_index > 0)
-        self.next_btn.setEnabled(self.current_page_index < len(self.doc) - 1)
-        self.page_label.setText(f"Page {self.current_page_index + 1} of {len(self.doc)}")
+        self.next_btn.setEnabled(self.current_page_index < total - 1)
+        self.page_label.setText(f"Page {self.current_page_index + 1} of {total}")
+
+        self.page_slider.blockSignals(True)
+        self.page_slider.setMaximum(total - 1)
+        self.page_slider.setValue(self.current_page_index)
+        self.page_slider.setEnabled(total > 1)
+        self.page_slider.blockSignals(False)
 
     def update_view(self):
         if not self.doc:
