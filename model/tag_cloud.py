@@ -60,10 +60,16 @@ class TagCloudThread(QThread):
             from PIL import ImageFont, ImageDraw, Image
             
             layout_data = []
-            
+
             for item in wc.layout_:
-                # layout_ item: (word, size, position=(y,x), orientation, color)
-                word, size, position, orientation, color = item
+                # layout_ item varies by wordcloud version:
+                #   newer: ((word, count), size, position=(y,x), orientation, color)
+                #   older: (word, size, position=(y,x), orientation, color)
+                word_or_tuple, size, position, orientation, color = item
+                if isinstance(word_or_tuple, tuple):
+                    word = word_or_tuple[0]
+                else:
+                    word = word_or_tuple
                 y, x = position
                 
                 # Re-calculate bounding box
