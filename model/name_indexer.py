@@ -39,6 +39,7 @@ SENTENCE_START_IGNORE = {
     "every", "no", "not", "if", "but", "yet", "so", "or",
     "for", "nor", "as", "at", "by", "from", "in", "into",
     "on", "to", "with", "that", "what", "which", "who",
+    "once", "then", "now", "still", "also", "just", "even",
 }
 
 # Document-structural words that look like proper nouns but aren't names.
@@ -121,10 +122,13 @@ DEFAULT_STOPWORDS = {
     # Interrogatives
     "how", "why", "what", "which", "who", "whom", "whose",
     # Other common words
-    "not", "yes",
+    "not", "yes", "no",
     "one", "two", "three", "first", "second", "third",
     "new", "old", "good", "great", "last", "next",
     "early", "late",
+    "once", "twice", "again", "away", "back", "much",
+    "long", "far", "near", "soon", "later", "earlier",
+    "almost", "enough", "together", "alone", "apart",
 }
 
 # Common English words that appear in organisation / place / event names
@@ -474,8 +478,15 @@ def extract_names_from_tokens(
             after_sentence_end = False
             continue
 
-        # Connector words always break the n-gram
+        # Connector words normally break the n-gram.  However, when the
+        # connector is *italic* and is extending an existing italic n-gram
+        # it is kept — this preserves titles like "The Sound of Music" or
+        # "War and Peace" which are typically set in italics.
         if word_lower in CONNECTOR_WORDS:
+            if current_ngram and token.is_italic:
+                current_ngram.append(word)
+                after_sentence_end = False
+                continue
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []

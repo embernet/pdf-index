@@ -339,24 +339,70 @@ class ControlsOutput(QWidget):
         self.view_source_chk.setChecked(config.get("view_source", False))
 
     def scroll_to_term(self, term):
-        """Scroll the output view to the given index term and highlight it."""
+        """Scroll the output view to the given index term and highlight it.
+
+        The index is rendered as lines of the form ``<b>Term</b>: pages``
+        (Active/HTML) or ``**Term**: pages`` (Markdown/Text).  We need to
+        match the *bold heading* for the term, not an accidental substring
+        inside another entry (e.g. searching for "Once" must not land on
+        "C**once**rto").
+
+        Strategy: first try an exact bold-tag match in the underlying HTML
+        (``<b>Term</b>``), falling back to a whole-word plain-text search,
+        and finally a plain substring search as a last resort.
+        """
         if not self.output_text.isVisible():
             return
 
         # Clear any previous extra selections
         self.output_text.setExtraSelections([])
 
+        from PyQt6.QtGui import QTextCharFormat, QTextDocument
+
         # Move cursor to start so we search the whole document
         cursor = self.output_text.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.Start)
         self.output_text.setTextCursor(cursor)
 
-        # Search for the term (case-insensitive by default)
-        if self.output_text.find(term):
+        found = False
+
+        # Strategy 1: search the raw HTML for <b>Term</b> and position
+        # the cursor at that text so the view scrolls to it.
+        html = self.output_text.toHtml()
+        import re
+        # Match the bold entry heading — case-insensitive
+        pattern = re.compile(
+            r'<b>' + re.escape(term) + r'</b>',
+            re.IGNORECASE,
+        )
+        m = pattern.search(html)
+        if m:
+            # Use QTextEdit.find with the exact term text — but first
+            # jump close to the right position using a plain-text cursor
+            # search so the visual scroll lands correctly.
+            # QTextEdit.find with FindWholeWords avoids substring hits.
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            self.output_text.setTextCursor(cursor)
+            flags = QTextDocument.FindFlag.FindWholeWords
+            found = self.output_text.find(term, flags)
+
+        # Strategy 2: whole-word search (no HTML introspection needed)
+        if not found:
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            self.output_text.setTextCursor(cursor)
+            flags = QTextDocument.FindFlag.FindWholeWords
+            found = self.output_text.find(term, flags)
+
+        # Strategy 3: plain substring (last resort)
+        if not found:
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            self.output_text.setTextCursor(cursor)
+            found = self.output_text.find(term)
+
+        if found:
             # find() already selected the text and scrolled to it.
             # Apply a persistent gold highlight so it stays visible
             # after the user clicks elsewhere.
-            from PyQt6.QtGui import QTextCharFormat
             sel = QTextEdit.ExtraSelection()
             sel.cursor = self.output_text.textCursor()
             fmt = QTextCharFormat()
