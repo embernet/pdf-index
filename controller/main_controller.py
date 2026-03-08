@@ -5,7 +5,7 @@ from view.main_window import MainWindow
 from model.indexer import IndexingThread
 from model.app_config import AppConfigManager
 from model.tag_cloud import TagCloudThread, recolor_wordcloud
-from model.name_indexer import NameIndexingThread
+from model.name_indexer import NameIndexingThread, DEFAULT_STOPWORDS
 from PyQt6.QtWidgets import QFileDialog, QApplication
 
 class MainController:
@@ -55,9 +55,16 @@ class MainController:
         self.view.exclude_editor.save_requested.connect(self.save_excludes)
         self.view.controls_output.exclude_entry_requested.connect(self.exclude_entry)
 
+        # Stopwords Editor
+        self.view.stopwords_editor.save_requested.connect(self.save_stopwords)
+
         # Active Link Click / Cloud Click
         self.view.controls_output.active_link_clicked.connect(self.on_active_link_clicked)
         self.view.controls_output.cloud_word_clicked.connect(self.on_cloud_word_clicked)
+
+        # Auto-highlight indexed words on page change
+        self.view.pdf_viewer.page_changed.connect(self._auto_highlight_current_page)
+        self.view.pdf_viewer.highlight_indexed_chk.toggled.connect(lambda: self.save_current_config())
 
         # Store last results to allow cheap format switching
         self.last_raw_results = None
@@ -91,9 +98,10 @@ class MainController:
         AppConfigManager.add_recent_project(dir_path)
         
         self.project_path = dir_path
-        self.view.setWindowTitle(f"PDF Indexer - {os.path.basename(dir_path)}")
+        self.view.setWindowTitle(f"pdf-indexer - {os.path.basename(dir_path)}")
         self.load_keywords()
         self.load_excludes()
+        self.load_stopwords()
 
         # Load Config
         config = ConfigManager.load_config(dir_path)
@@ -101,6 +109,7 @@ class MainController:
         # Set UI State
         self.view.controls_output.set_state(config)
         self.view.pdf_viewer.set_fit_width(config.get("fit_width", True))
+        self.view.pdf_viewer.highlight_indexed_chk.setChecked(config.get("highlight_indexed", True))
         
         # Load PDF
         pdf_name = config.get("pdf_filename")
@@ -148,7 +157,8 @@ class MainController:
             "view_source": ctrl.view_source_chk.isChecked(),
             "fit_width": viewer.fit_width_chk.isChecked(),
             "name_indexing": ctrl.name_indexing_chk.isChecked(),
-            "bold_indexing": ctrl.bold_indexing_chk.isChecked()
+            "bold_indexing": ctrl.bold_indexing_chk.isChecked(),
+            "highlight_indexed": viewer.highlight_indexed_chk.isChecked()
         }
         
         from model.config import ConfigManager
@@ -243,6 +253,34 @@ class MainController:
             else:
                 self.view.exclude_editor.set_text("")
 
+    def save_stopwords(self, text):
+        if not self.project_path:
+            return
+        sw_path = os.path.join(self.project_path, "stopwords.txt")
+        try:
+            with open(sw_path, 'w', encoding='utf-8') as f:
+                f.write(text)
+        except Exception as e:
+            print(f"Error saving stopwords: {e}")
+
+    def load_stopwords(self):
+        if not self.project_path:
+            return
+        sw_path = os.path.join(self.project_path, "stopwords.txt")
+        if os.path.exists(sw_path):
+            try:
+                with open(sw_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                    self.view.stopwords_editor.set_text(text)
+            except Exception as e:
+                print(f"Error loading stopwords: {e}")
+        else:
+            # First run: populate with default stopwords
+            words = sorted(DEFAULT_STOPWORDS)
+            text = "\n".join(words)
+            self.view.stopwords_editor.set_text(text)
+            self.save_stopwords(text)
+
     def exclude_entry(self, keyword):
         self.view.exclude_editor.add_word(keyword)
 
@@ -303,10 +341,12 @@ class MainController:
         if name_indexing_enabled:
             bold_enabled = self.view.controls_output.bold_indexing_chk.isChecked()
             exclude_words = {w.lower() for w in self.view.exclude_editor.get_words()}
+            stopwords = {w.lower() for w in self.view.stopwords_editor.get_words()}
 
             self.name_indexing_thread = NameIndexingThread(
                 self.current_pdf_path, strategy, offset,
                 include_bold=bold_enabled, exclude_words=exclude_words,
+                stopwords=stopwords,
             )
             # Only connect progress if keyword thread is not also running
             if not has_keywords:
@@ -360,6 +400,8 @@ class MainController:
         self.view.controls_output.create_btn.setEnabled(True)
         self.last_raw_results = merged_raw
         self.process_and_display_results()
+        # Apply auto-highlight to current page now that index is available
+        self._auto_highlight_current_page()
 
     def update_output_display_toggle(self, _):
         # Called when capitalization toggled
@@ -494,6 +536,30 @@ class MainController:
             self.view.pdf_viewer.jump_to_page(page_idx, highlight_term=keyword)
         except ValueError:
             pass
+
+    def _auto_highlight_current_page(self, page_idx=None):
+        """Highlight all indexed terms on the current PDF page."""
+        viewer = self.view.pdf_viewer
+        if not viewer.highlight_indexed_chk.isChecked():
+            return
+        if not self.last_raw_results:
+            return
+
+        if page_idx is None:
+            page_idx = viewer.current_page_index
+
+        # Find all keywords that have this page in their results
+        terms_on_page = []
+        for kw, pages in self.last_raw_results.items():
+            for p_idx, p_lbl in pages:
+                if p_idx == page_idx:
+                    terms_on_page.append(kw)
+                    break
+
+        if terms_on_page:
+            viewer.highlight_multiple_terms(terms_on_page)
+        else:
+            viewer.image_label.set_highlights([])
 
     def generate_markdown(self, results):
         count = len(results)

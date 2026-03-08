@@ -61,6 +61,72 @@ TITLE_PREFIXES = {
 # Sentence-ending punctuation characters.
 SENTENCE_END_CHARS = {'.', '?', '!'}
 
+# Default stopwords – common English words that should never appear as
+# standalone entries in a name index.  They may still appear as PART of a
+# multi-word name (e.g. "The Guardian", "The Hague") but will never start
+# a new n-gram on their own.
+DEFAULT_STOPWORDS = {
+    # Articles
+    "the", "a", "an",
+    # Pronouns
+    "he", "she", "it", "we", "they", "i", "you",
+    "his", "her", "its", "our", "their", "my", "your",
+    "him", "them", "us", "me",
+    "himself", "herself", "itself", "themselves", "ourselves",
+    # Demonstratives
+    "this", "that", "these", "those",
+    # Common verbs / auxiliaries
+    "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "having",
+    "do", "does", "did",
+    "will", "would", "shall", "should",
+    "can", "could", "may", "might", "must",
+    "need", "ought",
+    # Prepositions
+    "in", "on", "at", "to", "for", "from", "by", "with",
+    "about", "into", "through", "during", "before", "after",
+    "above", "below", "between", "under", "over", "up", "down",
+    "out", "off", "near", "around", "against", "along", "across",
+    "behind", "beyond", "within", "without", "upon", "toward",
+    "towards", "among", "amongst", "beside", "besides",
+    # Conjunctions
+    "and", "but", "or", "nor", "yet", "so",
+    "although", "though", "because", "since", "while", "when",
+    "where", "if", "unless", "until", "whether", "than",
+    # Adverbs / common sentence starters
+    "however", "therefore", "moreover", "furthermore",
+    "nevertheless", "nonetheless", "meanwhile", "consequently",
+    "subsequently", "accordingly", "alternatively", "additionally",
+    "specifically", "particularly", "generally", "typically",
+    "essentially", "basically", "obviously", "clearly",
+    "certainly", "undoubtedly", "indeed", "naturally",
+    "apparently", "presumably", "arguably", "significantly",
+    "importantly", "notably", "interestingly", "surprisingly",
+    "unfortunately", "fortunately", "ultimately", "eventually",
+    "initially", "finally", "perhaps", "maybe", "probably",
+    "possibly", "definitely", "surely",
+    # Determiners / quantifiers
+    "some", "any", "many", "much", "few", "several",
+    "each", "every", "all", "both", "no", "none",
+    "other", "another", "either", "neither",
+    "most", "more", "less", "least",
+    # Common adjectives / adverbs
+    "such", "same", "own", "only", "very",
+    "also", "just", "even", "still", "already",
+    "always", "never", "sometimes", "often", "usually",
+    "quite", "rather", "too",
+    # Locative / temporal
+    "there", "here", "then", "now", "today", "yesterday",
+    "tomorrow", "ago",
+    # Interrogatives
+    "how", "why", "what", "which", "who", "whom", "whose",
+    # Other common words
+    "not", "yes",
+    "one", "two", "three", "first", "second", "third",
+    "new", "old", "good", "great", "last", "next",
+    "early", "late",
+}
+
 # Regex for detecting Roman numerals.
 _ROMAN_RE = re.compile(r'^[IVXLCDM]+$')
 
@@ -126,18 +192,46 @@ def extract_styled_tokens(page) -> List[StyledToken]:
     data = page.get_text("dict")
     tokens: List[StyledToken] = []
 
-    for block in data.get("blocks", []):
-        if block.get("type", 0) != 0:  # skip image blocks
-            continue
+    text_blocks = [b for b in data.get("blocks", [])
+                   if b.get("type", 0) == 0]
 
-        # Insert a synthetic sentence-end token between blocks so that
-        # the first word of a new paragraph/heading is recognised as
-        # sentence-initial (e.g. "Chapter" at the top of a page).
-        if tokens:
-            tokens.append(StyledToken(
-                text=".", is_bold=False, is_italic=False,
-                is_superscript=False,
-            ))
+    # Estimate the text column width from bounding boxes of all lines.
+    # A line whose width fills the column is a wrapped line (text continues
+    # in the next block), NOT the end of a paragraph.  This lets names like
+    # "Ben Powell" be detected even when the PDF splits them across blocks.
+    min_left = float('inf')
+    max_right = 0.0
+    for blk in text_blocks:
+        for ln in blk.get("lines", []):
+            bbox = ln.get("bbox")
+            if bbox:
+                min_left = min(min_left, bbox[0])
+                max_right = max(max_right, bbox[2])
+    col_width = (max_right - min_left) if max_right > min_left else 0
+
+    prev_block = None
+
+    for block in text_blocks:
+        # Between blocks, decide whether to insert a synthetic sentence-end.
+        # If the previous block's last line fills the column width, the text
+        # is wrapping (not ending a paragraph) and we should NOT break any
+        # name n-gram that spans the boundary.
+        if tokens and prev_block is not None:
+            insert_sep = True
+            if col_width > 0:
+                prev_lines = prev_block.get("lines", [])
+                if prev_lines:
+                    last_bbox = prev_lines[-1].get("bbox")
+                    if last_bbox:
+                        line_w = last_bbox[2] - last_bbox[0]
+                        if line_w >= col_width * 0.9:
+                            insert_sep = False
+
+            if insert_sep:
+                tokens.append(StyledToken(
+                    text=".", is_bold=False, is_italic=False,
+                    is_superscript=False,
+                ))
 
         for line in block.get("lines", []):
             for span in line.get("spans", []):
@@ -155,6 +249,8 @@ def extract_styled_tokens(page) -> List[StyledToken]:
                         is_italic=is_italic,
                         is_superscript=is_superscript,
                     ))
+
+        prev_block = block
 
     return tokens
 
@@ -200,6 +296,7 @@ def extract_names_from_tokens(
     discovery_mode: bool = False,
     include_bold: bool = False,
     exclude_words: Set[str] | None = None,
+    stopwords: Set[str] | None = None,
 ) -> List[str]:
     """Scan token sequence and build n-grams of consecutive 'name words'.
 
@@ -212,6 +309,8 @@ def extract_names_from_tokens(
     - Superscript tokens (footnote numbers) are skipped.
     - Punctuation flushes and breaks the current n-gram.
     - Structural words (Chapter, Section, ...) always break the n-gram.
+    - Stopwords never *start* a new n-gram but may extend an existing one
+      (to allow multi-word names like "The Guardian").
 
     When *discovery_mode* is True (pass 1), ALL sentence-initial capitalised
     words are skipped (unless styled) so that only names confirmed by
@@ -220,9 +319,14 @@ def extract_names_from_tokens(
 
     *exclude_words* is a set of lowercased words that always break the n-gram
     (user-supplied exclusion list).
+
+    *stopwords* is a set of lowercased words that are prevented from starting
+    a new n-gram (but may extend an existing one).
     """
     if exclude_words is None:
         exclude_words = set()
+    if stopwords is None:
+        stopwords = set()
 
     names: List[str] = []
     current_ngram: List[str] = []
@@ -329,6 +433,9 @@ def extract_names_from_tokens(
             continue
 
         if is_name_word:
+            # Stopwords may extend an existing n-gram but never start one.
+            if word_lower in stopwords and not current_ngram:
+                continue
             current_ngram.append(word)
         else:
             # Lowercase non-styled, non-connector word: breaks n-gram
@@ -543,13 +650,14 @@ class NameIndexingThread(QThread):
     error_occurred = pyqtSignal(str)
 
     def __init__(self, pdf_path, page_numbering_strategy, offset=0,
-                 include_bold=False, exclude_words=None):
+                 include_bold=False, exclude_words=None, stopwords=None):
         super().__init__()
         self.pdf_path = pdf_path
         self.strategy = page_numbering_strategy
         self.offset = offset
         self.include_bold = include_bold
         self.exclude_words = exclude_words or set()
+        self.stopwords = stopwords or set()
         self._is_running = True
 
     def run(self):
@@ -574,6 +682,7 @@ class NameIndexingThread(QThread):
                     tokens, discovery_mode=True,
                     include_bold=self.include_bold,
                     exclude_words=self.exclude_words,
+                    stopwords=self.stopwords,
                 )
                 names = filter_names(raw_names)
                 name_vocabulary.update(names)
@@ -584,6 +693,15 @@ class NameIndexingThread(QThread):
             if not self._is_running:
                 doc.close()
                 return
+
+            # Remove standalone stopwords from the vocabulary.
+            # Multi-word names containing a stopword (e.g. "The Guardian")
+            # are kept; only single-word entries that are stopwords are purged.
+            if self.stopwords:
+                name_vocabulary = {
+                    name for name in name_vocabulary
+                    if " " in name or name.lower() not in self.stopwords
+                }
 
             if not name_vocabulary:
                 doc.close()

@@ -1,5 +1,5 @@
 import fitz
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QHBoxLayout, QPushButton, QCheckBox, QMenu, QApplication, QSlider
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QHBoxLayout, QPushButton, QCheckBox, QMenu, QApplication, QSlider, QLineEdit
 from PyQt6.QtGui import QPixmap, QImage, QAction, QPainter, QPen, QColor, QCursor
 from PyQt6.QtCore import Qt, QRect, pyqtSignal, QPoint, QRectF
 
@@ -150,7 +150,8 @@ class ClickableLabel(QLabel):
 
 
 class PDFViewer(QWidget):
-    add_keyword_requested = pyqtSignal(str) 
+    add_keyword_requested = pyqtSignal(str)
+    page_changed = pyqtSignal(int)
 
     def __init__(self):
         super().__init__()
@@ -187,7 +188,25 @@ class PDFViewer(QWidget):
         self.next_btn.clicked.connect(self.next_page)
         self.prev_btn.setEnabled(False)
         self.next_btn.setEnabled(False)
-        
+
+        # Second toolbar: highlight toggle + goto page
+        self.toolbar2_layout = QHBoxLayout()
+        self.highlight_indexed_chk = QCheckBox("Highlight indexed words")
+        self.highlight_indexed_chk.setChecked(True)
+        self.highlight_indexed_chk.toggled.connect(self._on_highlight_toggled)
+
+        self.goto_edit = QLineEdit()
+        self.goto_edit.setPlaceholderText("Page #")
+        self.goto_edit.setFixedWidth(70)
+        self.goto_edit.returnPressed.connect(self._on_goto_page)
+
+        self.toolbar2_layout.addWidget(self.highlight_indexed_chk)
+        self.toolbar2_layout.addStretch()
+        goto_label = QLabel("Go to:")
+        self.toolbar2_layout.addWidget(goto_label)
+        self.toolbar2_layout.addWidget(self.goto_edit)
+        self.layout.addLayout(self.toolbar2_layout)
+
         # Scroll Area for PDF Page
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True) 
@@ -236,26 +255,32 @@ class PDFViewer(QWidget):
             self.current_page_index -= 1
             self.update_view()
             self.update_controls()
+            self.page_changed.emit(self.current_page_index)
 
     def next_page(self):
         if self.doc and self.current_page_index < len(self.doc) - 1:
             self.current_page_index += 1
             self.update_view()
             self.update_controls()
-            
+            self.page_changed.emit(self.current_page_index)
+
     def _on_slider_changed(self, value):
         if self.doc and 0 <= value < len(self.doc) and value != self.current_page_index:
             self.current_page_index = value
             self.update_view()
             self.update_controls()
+            self.page_changed.emit(self.current_page_index)
 
     def jump_to_page(self, index, highlight_term=None):
         if self.doc and 0 <= index < len(self.doc):
             self.current_page_index = index
             self.update_view()
             self.update_controls()
-            if highlight_term:
+            # When auto-highlight is on, let the controller handle all terms;
+            # otherwise fall back to single-term highlight from active links
+            if highlight_term and not self.highlight_indexed_chk.isChecked():
                 self.highlight_term(highlight_term)
+            self.page_changed.emit(self.current_page_index)
 
     def highlight_term(self, term):
         """Highlight all occurrences of term on the current page."""
@@ -295,6 +320,66 @@ class PDFViewer(QWidget):
                         indices.add(idx)
 
         self.image_label.set_highlights(sorted(indices))
+
+    def _on_highlight_toggled(self, checked):
+        if not checked:
+            self.image_label.set_highlights([])
+        else:
+            self.page_changed.emit(self.current_page_index)
+
+    def _on_goto_page(self):
+        text = self.goto_edit.text().strip()
+        self.goto_edit.clear()
+        try:
+            page_num = int(text)
+            index = page_num - 1  # Convert 1-based display to 0-based index
+            if self.doc and 0 <= index < len(self.doc):
+                self.current_page_index = index
+                self.update_view()
+                self.update_controls()
+                self.page_changed.emit(self.current_page_index)
+        except ValueError:
+            pass
+
+    def highlight_multiple_terms(self, terms):
+        """Highlight all occurrences of multiple terms on the current page."""
+        import unicodedata
+
+        words = self.image_label.words
+        if not words or not terms:
+            self.image_label.set_highlights([])
+            return
+
+        all_indices = set()
+
+        for term in terms:
+            term_normalized = unicodedata.normalize("NFKC", term).lower()
+
+            # Build search variants: original + reversed "Last, First" -> "First Last"
+            search_variants = [term_normalized.split()]
+            if ", " in term_normalized:
+                parts = term_normalized.split(", ", 1)
+                reversed_term = parts[1] + " " + parts[0]
+                search_variants.append(reversed_term.split())
+
+            for term_words in search_variants:
+                if not term_words:
+                    continue
+                n = len(term_words)
+                for i in range(len(words) - n + 1):
+                    match = True
+                    for j in range(n):
+                        word_text = unicodedata.normalize("NFKC", words[i + j][4]).lower()
+                        word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
+                        target_stripped = term_words[j].strip('.,;:!?()[]{}"\'-/')
+                        if word_stripped != target_stripped:
+                            match = False
+                            break
+                    if match:
+                        for idx in range(i, i + n):
+                            all_indices.add(idx)
+
+        self.image_label.set_highlights(sorted(all_indices))
 
     def set_fit_width(self, enabled):
         self.fit_width_chk.setChecked(enabled)
