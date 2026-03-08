@@ -431,19 +431,22 @@ class MainController:
             pass
 
     def generate_markdown(self, results):
-        lines = ["# Index\n"]
+        count = len(results)
+        lines = [f"# Index ({count} entries)\n"]
         for kw, pages in results.items():
             lines.append(f"**{kw}**: {pages}  ")
         return "\n".join(lines)
 
     def generate_text(self, results):
-        lines = []
+        count = len(results)
+        lines = [f"Index ({count} entries)\n"]
         for kw, pages in results.items():
             lines.append(f"{kw}: {pages}")
         return "\n".join(lines)
 
     def generate_html(self, results):
-        lines = ["<html><body><h1>Index</h1>"]
+        count = len(results)
+        lines = [f"<html><body><h1>Index ({count} entries)</h1>"]
         for kw, pages in results.items():
             lines.append(f"<div><b>{kw}</b>: {pages}</div>")
         lines.append("</body></html>")
@@ -456,7 +459,8 @@ class MainController:
         capitalize = self.view.controls_output.capitalize_chk.isChecked()
         sorted_keys = sorted(self.last_raw_results.keys(), key=lambda x: x.lower())
         
-        lines = ["<html><head><style>a { text-decoration: none; color: blue; } a:hover { text-decoration: underline; }</style></head><body><h1>Active Index</h1>"]
+        count = len(sorted_keys)
+        lines = [f'<html><head><style>a {{ text-decoration: none; color: blue; }} a:hover {{ text-decoration: underline; }}</style></head><body><h1>Active Index ({count} entries)</h1>']
         
         for kw in sorted_keys:
             pages = self.last_raw_results[kw] # list of (index, label)
