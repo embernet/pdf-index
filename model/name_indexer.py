@@ -289,8 +289,8 @@ def extract_names_from_tokens(
             after_sentence_end = False
             continue
 
-        # Connector words break the n-gram (unless styled)
-        if word_lower in CONNECTOR_WORDS and not is_styled:
+        # Connector words always break the n-gram
+        if word_lower in CONNECTOR_WORDS:
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
@@ -318,9 +318,8 @@ def extract_names_from_tokens(
 
         after_sentence_end = False
 
-        # All-caps words (section titles like "INTRODUCTION") handled as
-        # single tokens: skip unless styled.
-        if _is_all_caps_word(word) and not is_styled:
+        # All-caps words (section titles like "INTRODUCTION") — always skip.
+        if _is_all_caps_word(word):
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
