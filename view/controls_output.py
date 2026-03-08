@@ -212,10 +212,11 @@ class ControlsOutput(QWidget):
         return self.offset_spin.value()
 
     def handle_link_click(self, url):
-        # url is QUrl
-        s = url.toString()
-        if s.startswith("#"):
-             self.active_link_clicked.emit(s[1:])
+        # url is QUrl – use fragment() to get the decoded anchor text
+        # (toString() percent-encodes characters like |)
+        fragment = url.fragment()
+        if fragment:
+            self.active_link_clicked.emit(fragment)
              
     def set_state(self, config):
         # Set Strategy
