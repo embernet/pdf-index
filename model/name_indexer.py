@@ -204,18 +204,18 @@ def extract_names_from_tokens(
     """Scan token sequence and build n-grams of consecutive 'name words'.
 
     Rules:
-    - A word qualifies if its first char is uppercase (Unicode-aware) OR it is
-      styled (bold when *include_bold* is True, or italic).
-    - Connector words (and, of, to, ...) in lowercase break the n-gram unless
-      the word is styled.
+    - A word qualifies if its first char is uppercase (Unicode-aware).
+    - Bold/italic styling (when *include_bold* is True for bold) only helps
+      capitalised words bypass the sentence-initial filter; it does NOT
+      promote lowercase words to name candidates.
+    - Connector words (and, of, to, ...) always break the n-gram.
     - Superscript tokens (footnote numbers) are skipped.
     - Punctuation flushes and breaks the current n-gram.
-    - Structural words (Chapter, Section, ...) always break the n-gram
-      regardless of styling.
+    - Structural words (Chapter, Section, ...) always break the n-gram.
 
     When *discovery_mode* is True (pass 1), ALL sentence-initial capitalised
-    words are skipped so that only names confirmed by mid-sentence usage
-    enter the vocabulary.  When False (legacy behaviour), only common
+    words are skipped (unless styled) so that only names confirmed by
+    mid-sentence usage enter the vocabulary.  When False, only common
     sentence-starters in SENTENCE_START_IGNORE are skipped.
 
     *exclude_words* is a set of lowercased words that always break the n-gram
@@ -226,7 +226,7 @@ def extract_names_from_tokens(
 
     names: List[str] = []
     current_ngram: List[str] = []
-    after_sentence_end = False
+    after_sentence_end = True  # Start of page is effectively a sentence boundary
 
     for token in tokens:
         word = token.text.strip()
@@ -303,7 +303,9 @@ def extract_names_from_tokens(
         if word[0].isupper():
             # Sentence-initial capitalisation check
             if after_sentence_end:
-                if discovery_mode or word_lower in SENTENCE_START_IGNORE:
+                if is_styled:
+                    pass  # Styled words bypass sentence-initial filter
+                elif discovery_mode or word_lower in SENTENCE_START_IGNORE:
                     # In discovery mode skip ALL sentence-initial caps;
                     # otherwise only skip common starters.
                     after_sentence_end = False
@@ -313,8 +315,9 @@ def extract_names_from_tokens(
                     continue
             is_name_word = True
 
-        if is_styled:
-            is_name_word = True
+        # Note: bold/italic ONLY helps capitalised words bypass the sentence-
+        # initial filter; lowercase styled text is NOT promoted to name words
+        # (prevents bold paragraphs from polluting the index).
 
         after_sentence_end = False
 
@@ -373,6 +376,11 @@ def find_known_names_in_tokens(
 
     for i in range(n_tokens):
         if word_tokens[i] is None:
+            continue
+        # Only consider positions where the first word is capitalised;
+        # this prevents matching purely lowercase text like "around the
+        # world" when only "Around The World" is in the vocabulary.
+        if not word_tokens[i][0].isupper():
             continue
         # Try n-grams from longest to shortest for greedy matching
         for length in range(min(max_ngram_len, n_tokens - i), 0, -1):
