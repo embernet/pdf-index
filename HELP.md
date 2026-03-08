@@ -4,7 +4,7 @@
 
 1. **Create or open a project** via the File menu.
 2. **Import a PDF** into the project.
-3. **Add keywords** in the Keywords panel (one per line), or select text in the PDF viewer to add keywords directly.
+3. **Add keywords** in the Keywords panel (one per line), or select text in the PDF viewer and right-click to add as keywords. Double-click individual words to add them immediately.
 4. **Click "Create Index"** to search the PDF and generate the index.
 5. **Browse the Active Index** -- click any page number to jump to that page in the PDF with the term highlighted in orange.
 6. **Use name indexing** (on by default) to automatically discover proper nouns without manually adding them as keywords. Add false positives to the Exclude List.
@@ -20,6 +20,8 @@
 - **Capitalize Entries** -- Optionally capitalise the first letter of each index entry.
 
 ## Output Formats
+
+Index file formats are automatically saved in the project folder when they are generated.
 
 - **Markdown** -- Standard Markdown formatted index.
 - **Plain Text** -- Simple text output.
