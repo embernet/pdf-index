@@ -122,15 +122,15 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _load_help_content(self):
-        readme_path = os.path.join(
+        help_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "README.md",
+            "HELP.md",
         )
         try:
-            with open(readme_path, "r", encoding="utf-8") as f:
+            with open(help_path, "r", encoding="utf-8") as f:
                 self.help_panel.setMarkdown(f.read())
         except FileNotFoundError:
-            self.help_panel.setPlainText("README.md not found.")
+            self.help_panel.setPlainText("HELP.md not found.")
 
     def _toggle_help(self, checked):
         self.help_panel.setVisible(checked)
