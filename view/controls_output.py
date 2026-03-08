@@ -157,6 +157,7 @@ class ControlsOutput(QWidget):
         # Stored content for filtering
         self._raw_content = ""
         self._raw_format = "text"
+        self._total_entry_count = 0
 
         # Stacked widgets manually managed via visibility
         self.output_text = QTextBrowser()
@@ -215,10 +216,12 @@ class ControlsOutput(QWidget):
         query = self.search_input.text().strip().lower()
         if not query:
             self._render_content(self._raw_content, self._raw_format)
+            self._update_entry_count_label()
             return
 
         content = self._raw_content
         fmt = self._raw_format
+        filtered_count = 0
 
         if fmt in ('html', 'active'):
             # Filter <div> lines; keep header and wrapper lines
@@ -228,6 +231,7 @@ class ControlsOutput(QWidget):
                 if '<div>' in lower:
                     if query in lower:
                         filtered.append(line)
+                        filtered_count += 1
                 else:
                     filtered.append(line)
             self._render_content('\n'.join(filtered), fmt)
@@ -238,6 +242,7 @@ class ControlsOutput(QWidget):
             for line in lines[1:]:
                 if query in line.lower():
                     filtered.append(line)
+                    filtered_count += 1
             self._render_content('\n'.join(filtered), fmt)
         else:
             # Plain text
@@ -246,7 +251,18 @@ class ControlsOutput(QWidget):
             for line in lines[1:]:
                 if query in line.lower():
                     filtered.append(line)
+                    filtered_count += 1
             self._render_content('\n'.join(filtered), fmt)
+
+        self._update_entry_count_label(filtered_count)
+
+    def _update_entry_count_label(self, filtered_count=None):
+        """Update the entry count label, showing filtered/total when filtering."""
+        total = self._total_entry_count
+        if filtered_count is not None and total > 0:
+            self.entry_count_label.setText(f"{filtered_count}/{total} entries")
+        elif total > 0:
+            self.entry_count_label.setText(f"{total} entries")
 
     def set_cloud_data(self, image, layout):
         self.cloud_label.set_cloud_data(image, layout)
