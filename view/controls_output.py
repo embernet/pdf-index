@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea, QTabBar
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea, QTabBar, QLineEdit
 from PyQt6.QtCore import pyqtSignal, Qt, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QAction, QTextCursor
 
@@ -146,7 +146,18 @@ class ControlsOutput(QWidget):
         tab_layout.addWidget(self.view_source_chk)
 
         self.output_layout.addLayout(tab_layout)
-        
+
+        # Search / filter bar
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Filter index...")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.textChanged.connect(self._apply_filter)
+        self.output_layout.addWidget(self.search_input)
+
+        # Stored content for filtering
+        self._raw_content = ""
+        self._raw_format = "text"
+
         # Stacked widgets manually managed via visibility
         self.output_text = QTextBrowser()
         self.output_text.setOpenExternalLinks(False)
@@ -173,14 +184,21 @@ class ControlsOutput(QWidget):
         # Hide all first
         self.output_text.setVisible(False)
         self.cloud_scroll.setVisible(False)
-        
+
         if format_type in ('tag_cloud', 'index_cloud'):
             self.cloud_scroll.setVisible(True)
+            self.search_input.setVisible(False)
             return
 
+        self.search_input.setVisible(True)
+        self._raw_content = content
+        self._raw_format = format_type
+        self._apply_filter()
+
+    def _render_content(self, content, format_type):
         self.output_text.setVisible(True)
         self.output_text.clear()
-        
+
         if self.view_source_chk.isChecked():
              self.output_text.setPlainText(content)
              return
@@ -191,6 +209,44 @@ class ControlsOutput(QWidget):
              self.output_text.setMarkdown(content)
         else:
             self.output_text.setPlainText(content)
+
+    def _apply_filter(self):
+        """Filter the displayed index to lines containing the search text."""
+        query = self.search_input.text().strip().lower()
+        if not query:
+            self._render_content(self._raw_content, self._raw_format)
+            return
+
+        content = self._raw_content
+        fmt = self._raw_format
+
+        if fmt in ('html', 'active'):
+            # Filter <div> lines; keep header and wrapper lines
+            filtered = []
+            for line in content.split('\n'):
+                lower = line.lower()
+                if '<div>' in lower:
+                    if query in lower:
+                        filtered.append(line)
+                else:
+                    filtered.append(line)
+            self._render_content('\n'.join(filtered), fmt)
+        elif fmt == 'markdown':
+            # First line is the header; remaining are entry lines
+            lines = content.split('\n')
+            filtered = [lines[0]] if lines else []
+            for line in lines[1:]:
+                if query in line.lower():
+                    filtered.append(line)
+            self._render_content('\n'.join(filtered), fmt)
+        else:
+            # Plain text
+            lines = content.split('\n')
+            filtered = [lines[0]] if lines else []
+            for line in lines[1:]:
+                if query in line.lower():
+                    filtered.append(line)
+            self._render_content('\n'.join(filtered), fmt)
 
     def set_cloud_data(self, image, layout):
         self.cloud_label.set_cloud_data(image, layout)
