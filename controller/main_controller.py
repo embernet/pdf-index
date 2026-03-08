@@ -359,7 +359,10 @@ class MainController:
         if name_indexing_enabled:
             bold_enabled = self.view.controls_output.bold_indexing_chk.isChecked()
             exclude_words = {w.lower() for w in self.view.exclude_editor.get_words()}
-            stopwords = {w.lower() for w in self.view.stopwords_editor.get_words()}
+            # Always include DEFAULT_STOPWORDS so that newly added
+            # defaults take effect even if the user's stopwords.txt
+            # was created from an older version.
+            stopwords = DEFAULT_STOPWORDS | {w.lower() for w in self.view.stopwords_editor.get_words()}
 
             self.name_indexing_thread = NameIndexingThread(
                 self.current_pdf_path, strategy, offset,
