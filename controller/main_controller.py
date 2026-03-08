@@ -49,8 +49,11 @@ class MainController:
         self.view.pdf_viewer.fit_width_chk.toggled.connect(lambda: self.save_current_config())
         self.view.controls_output.name_indexing_chk.toggled.connect(lambda: self.save_current_config())
         self.view.controls_output.bold_indexing_chk.toggled.connect(lambda: self.save_current_config())
-        self.view.controls_output.exclude_edit.editingFinished.connect(lambda: self.save_current_config())
-        
+
+        # Exclude Editor
+        self.view.exclude_editor.save_requested.connect(self.save_excludes)
+        self.view.controls_output.exclude_entry_requested.connect(self.exclude_entry)
+
         # Active Link Click / Cloud Click
         self.view.controls_output.active_link_clicked.connect(self.on_active_link_clicked)
         self.view.controls_output.cloud_word_clicked.connect(self.on_cloud_word_clicked)
@@ -87,7 +90,8 @@ class MainController:
         self.project_path = dir_path
         self.view.setWindowTitle(f"PDF Indexer - {os.path.basename(dir_path)}")
         self.load_keywords()
-        
+        self.load_excludes()
+
         # Load Config
         config = ConfigManager.load_config(dir_path)
         
@@ -141,8 +145,7 @@ class MainController:
             "view_source": ctrl.view_source_chk.isChecked(),
             "fit_width": viewer.fit_width_chk.isChecked(),
             "name_indexing": ctrl.name_indexing_chk.isChecked(),
-            "bold_indexing": ctrl.bold_indexing_chk.isChecked(),
-            "name_exclude_list": ctrl.exclude_edit.text()
+            "bold_indexing": ctrl.bold_indexing_chk.isChecked()
         }
         
         from model.config import ConfigManager
@@ -200,6 +203,43 @@ class MainController:
             except Exception as e:
                 print(f"Error loading keywords: {e}")
 
+    def save_excludes(self, text):
+        if not self.project_path:
+            return
+        exc_path = os.path.join(self.project_path, "excludes.txt")
+        try:
+            with open(exc_path, 'w', encoding='utf-8') as f:
+                f.write(text)
+        except Exception as e:
+            print(f"Error saving excludes: {e}")
+
+    def load_excludes(self):
+        if not self.project_path:
+            return
+        exc_path = os.path.join(self.project_path, "excludes.txt")
+        if os.path.exists(exc_path):
+            try:
+                with open(exc_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                    self.view.exclude_editor.set_text(text)
+            except Exception as e:
+                print(f"Error loading excludes: {e}")
+        else:
+            # Migrate from old comma-separated config
+            from model.config import ConfigManager
+            config = ConfigManager.load_config(self.project_path)
+            old_list = config.get("name_exclude_list", "")
+            if old_list:
+                words = [w.strip() for w in old_list.split(",") if w.strip()]
+                text = "\n".join(words)
+                self.view.exclude_editor.set_text(text)
+                self.save_excludes(text)
+            else:
+                self.view.exclude_editor.set_text("")
+
+    def exclude_entry(self, keyword):
+        self.view.exclude_editor.add_word(keyword)
+
     def add_keyword_from_selection(self, text):
         # Strip trailing punctuation
         text = text.rstrip(string.punctuation)
@@ -256,8 +296,7 @@ class MainController:
         # Start name indexing (if enabled)
         if name_indexing_enabled:
             bold_enabled = self.view.controls_output.bold_indexing_chk.isChecked()
-            exclude_text = self.view.controls_output.exclude_edit.text()
-            exclude_words = {w.strip().lower() for w in exclude_text.split(",") if w.strip()}
+            exclude_words = {w.lower() for w in self.view.exclude_editor.get_words()}
 
             self.name_indexing_thread = NameIndexingThread(
                 self.current_pdf_path, strategy, offset,

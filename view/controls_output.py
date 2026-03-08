@@ -1,6 +1,6 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QProgressBar, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea, QLineEdit
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QProgressBar, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea
 from PyQt6.QtCore import pyqtSignal, Qt, QRect
-from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen
+from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QAction, QTextCursor
 
 class CloudLabel(QLabel):
     word_clicked = pyqtSignal(str)
@@ -68,6 +68,7 @@ class ControlsOutput(QWidget):
     create_index_requested = pyqtSignal()
     active_link_clicked = pyqtSignal(str) # Emits page number string or cloud action
     cloud_word_clicked = pyqtSignal(str)
+    exclude_entry_requested = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -119,10 +120,6 @@ class ControlsOutput(QWidget):
         self.bold_indexing_chk = QCheckBox("Index Bold Text")
         self.bold_indexing_chk.setChecked(False)
         self.name_options_layout.addWidget(self.bold_indexing_chk)
-        self.name_options_layout.addWidget(QLabel("Exclude:"))
-        self.exclude_edit = QLineEdit()
-        self.exclude_edit.setPlaceholderText("Comma-separated words to exclude from name indexing")
-        self.name_options_layout.addWidget(self.exclude_edit, 1)
         self.layout.addLayout(self.name_options_layout)
 
         # Progress Bar
@@ -167,6 +164,8 @@ class ControlsOutput(QWidget):
         self.output_text = QTextBrowser()
         self.output_text.setOpenExternalLinks(False)
         self.output_text.anchorClicked.connect(self.handle_link_click)
+        self.output_text.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.output_text.customContextMenuRequested.connect(self.show_output_context_menu)
         self.output_layout.addWidget(self.output_text)
         
         self.cloud_label = CloudLabel()
@@ -225,6 +224,31 @@ class ControlsOutput(QWidget):
     def get_offset(self):
         return self.offset_spin.value()
 
+    def show_output_context_menu(self, pos):
+        cursor = self.output_text.cursorForPosition(pos)
+        cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+        line = cursor.selectedText().strip()
+
+        keyword = None
+        if not self.view_source_chk.isChecked() and ":" in line:
+            keyword = line.split(":", 1)[0].strip()
+
+        menu = self.output_text.createStandardContextMenu()
+
+        if keyword:
+            first = menu.actions()[0] if menu.actions() else None
+            exclude_action = QAction(f'Exclude "{keyword}"', self)
+            exclude_action.triggered.connect(
+                lambda checked, k=keyword: self.exclude_entry_requested.emit(k)
+            )
+            if first:
+                menu.insertAction(first, exclude_action)
+                menu.insertSeparator(first)
+            else:
+                menu.addAction(exclude_action)
+
+        menu.exec(self.output_text.mapToGlobal(pos))
+
     def handle_link_click(self, url):
         # url is QUrl – use fragment() to get the decoded anchor text
         # (toString() percent-encodes characters like |)
@@ -259,5 +283,4 @@ class ControlsOutput(QWidget):
         self.capitalize_chk.setChecked(config.get("capitalize", False))
         self.name_indexing_chk.setChecked(config.get("name_indexing", False))
         self.bold_indexing_chk.setChecked(config.get("bold_indexing", False))
-        self.exclude_edit.setText(config.get("name_exclude_list", ""))
         self.view_source_chk.setChecked(config.get("view_source", False))

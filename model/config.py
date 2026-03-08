@@ -11,8 +11,7 @@ class ConfigManager:
         "view_source": False,
         "fit_width": True,
         "name_indexing": False,
-        "bold_indexing": False,
-        "name_exclude_list": ""
+        "bold_indexing": False
     }
 
     @staticmethod

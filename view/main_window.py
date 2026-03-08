@@ -3,6 +3,7 @@ from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 
 from view.keyword_editor import KeywordEditor
+from view.exclude_editor import ExcludeEditor
 from view.pdf_viewer import PDFViewer
 from view.controls_output import ControlsOutput
 
@@ -11,26 +12,33 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("PDF Indexer")
         self.resize(1200, 800)
-        
+
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        
+
         self.layout = QHBoxLayout()
         self.central_widget.setLayout(self.layout)
-        
+
         # Splitter to hold the 3 panes
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.layout.addWidget(self.splitter)
-        
-        # Instantiate views
+
+        # Left pane: vertical splitter with keywords (2/3) and excludes (1/3)
+        self.left_splitter = QSplitter(Qt.Orientation.Vertical)
         self.keyword_editor = KeywordEditor()
+        self.exclude_editor = ExcludeEditor()
+        self.left_splitter.addWidget(self.keyword_editor)
+        self.left_splitter.addWidget(self.exclude_editor)
+        self.left_splitter.setStretchFactor(0, 2)
+        self.left_splitter.setStretchFactor(1, 1)
+
         self.pdf_viewer = PDFViewer()
         self.controls_output = ControlsOutput()
-        
-        self.splitter.addWidget(self.keyword_editor)
+
+        self.splitter.addWidget(self.left_splitter)
         self.splitter.addWidget(self.pdf_viewer)
         self.splitter.addWidget(self.controls_output)
-        
+
         # Set stretch factors (approx 20%, 50%, 30%)
         self.splitter.setStretchFactor(0, 2)
         self.splitter.setStretchFactor(1, 5)
