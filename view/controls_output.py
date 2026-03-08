@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QProgressBar, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QProgressBar, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea, QLineEdit
 from PyQt6.QtCore import pyqtSignal, Qt, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen
 
@@ -110,7 +110,18 @@ class ControlsOutput(QWidget):
         self.controls_layout.addWidget(self.create_btn)
         
         self.layout.addLayout(self.controls_layout)
-        
+
+        # Name indexing options row
+        self.name_options_layout = QHBoxLayout()
+        self.bold_indexing_chk = QCheckBox("Index Bold Text")
+        self.bold_indexing_chk.setChecked(False)
+        self.name_options_layout.addWidget(self.bold_indexing_chk)
+        self.name_options_layout.addWidget(QLabel("Exclude:"))
+        self.exclude_edit = QLineEdit()
+        self.exclude_edit.setPlaceholderText("Comma-separated words to exclude from name indexing")
+        self.name_options_layout.addWidget(self.exclude_edit, 1)
+        self.layout.addLayout(self.name_options_layout)
+
         # Progress Bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
@@ -244,4 +255,6 @@ class ControlsOutput(QWidget):
         # Set Options
         self.capitalize_chk.setChecked(config.get("capitalize", False))
         self.name_indexing_chk.setChecked(config.get("name_indexing", False))
+        self.bold_indexing_chk.setChecked(config.get("bold_indexing", False))
+        self.exclude_edit.setText(config.get("name_exclude_list", ""))
         self.view_source_chk.setChecked(config.get("view_source", False))

@@ -48,6 +48,8 @@ class MainController:
         self.view.controls_output.offset_spin.valueChanged.connect(lambda: self.save_current_config())
         self.view.pdf_viewer.fit_width_chk.toggled.connect(lambda: self.save_current_config())
         self.view.controls_output.name_indexing_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.controls_output.bold_indexing_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.controls_output.exclude_edit.editingFinished.connect(lambda: self.save_current_config())
         
         # Active Link Click / Cloud Click
         self.view.controls_output.active_link_clicked.connect(self.on_active_link_clicked)
@@ -138,7 +140,9 @@ class MainController:
             "capitalize": ctrl.capitalize_chk.isChecked(),
             "view_source": ctrl.view_source_chk.isChecked(),
             "fit_width": viewer.fit_width_chk.isChecked(),
-            "name_indexing": ctrl.name_indexing_chk.isChecked()
+            "name_indexing": ctrl.name_indexing_chk.isChecked(),
+            "bold_indexing": ctrl.bold_indexing_chk.isChecked(),
+            "name_exclude_list": ctrl.exclude_edit.text()
         }
         
         from model.config import ConfigManager
@@ -251,8 +255,13 @@ class MainController:
 
         # Start name indexing (if enabled)
         if name_indexing_enabled:
+            bold_enabled = self.view.controls_output.bold_indexing_chk.isChecked()
+            exclude_text = self.view.controls_output.exclude_edit.text()
+            exclude_words = {w.strip().lower() for w in exclude_text.split(",") if w.strip()}
+
             self.name_indexing_thread = NameIndexingThread(
-                self.current_pdf_path, strategy, offset
+                self.current_pdf_path, strategy, offset,
+                include_bold=bold_enabled, exclude_words=exclude_words,
             )
             # Only connect progress if keyword thread is not also running
             if not has_keywords:

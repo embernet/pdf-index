@@ -129,6 +129,16 @@ def extract_styled_tokens(page) -> List[StyledToken]:
     for block in data.get("blocks", []):
         if block.get("type", 0) != 0:  # skip image blocks
             continue
+
+        # Insert a synthetic sentence-end token between blocks so that
+        # the first word of a new paragraph/heading is recognised as
+        # sentence-initial (e.g. "Chapter" at the top of a page).
+        if tokens:
+            tokens.append(StyledToken(
+                text=".", is_bold=False, is_italic=False,
+                is_superscript=False,
+            ))
+
         for line in block.get("lines", []):
             for span in line.get("spans", []):
                 flags = span.get("flags", 0)
@@ -188,22 +198,32 @@ def _get_all_caps_line_indices(page) -> Set[int]:
 def extract_names_from_tokens(
     tokens: List[StyledToken],
     discovery_mode: bool = False,
+    include_bold: bool = False,
+    exclude_words: Set[str] | None = None,
 ) -> List[str]:
     """Scan token sequence and build n-grams of consecutive 'name words'.
 
     Rules:
     - A word qualifies if its first char is uppercase (Unicode-aware) OR it is
-      bold/italic.
+      styled (bold when *include_bold* is True, or italic).
     - Connector words (and, of, to, ...) in lowercase break the n-gram unless
-      the word is bold/italic.
+      the word is styled.
     - Superscript tokens (footnote numbers) are skipped.
     - Punctuation flushes and breaks the current n-gram.
+    - Structural words (Chapter, Section, ...) always break the n-gram
+      regardless of styling.
 
     When *discovery_mode* is True (pass 1), ALL sentence-initial capitalised
     words are skipped so that only names confirmed by mid-sentence usage
     enter the vocabulary.  When False (legacy behaviour), only common
     sentence-starters in SENTENCE_START_IGNORE are skipped.
+
+    *exclude_words* is a set of lowercased words that always break the n-gram
+    (user-supplied exclusion list).
     """
+    if exclude_words is None:
+        exclude_words = set()
+
     names: List[str] = []
     current_ngram: List[str] = []
     after_sentence_end = False
@@ -230,18 +250,26 @@ def extract_names_from_tokens(
             continue
 
         word_lower = word.lower()
-        is_styled = token.is_bold or token.is_italic
+        is_styled = (token.is_bold and include_bold) or token.is_italic
 
-        # Filter: structural words (Chapter, Section, ...)
-        if word_lower in STRUCTURAL_WORDS and not is_styled:
+        # Filter: user-excluded words (always break n-gram)
+        if word_lower in exclude_words:
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
             after_sentence_end = False
             continue
 
-        # Filter: Roman numerals
-        if _is_roman_numeral(word) and not is_styled:
+        # Filter: structural words (Chapter, Section, ...) — unconditional
+        if word_lower in STRUCTURAL_WORDS:
+            if current_ngram:
+                names.append(" ".join(current_ngram))
+                current_ngram = []
+            after_sentence_end = False
+            continue
+
+        # Filter: Roman numerals — unconditional
+        if _is_roman_numeral(word):
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
@@ -257,11 +285,11 @@ def extract_names_from_tokens(
             continue
 
         # Title prefixes: skip the word but keep building the n-gram
-        if word_lower.rstrip('.') in TITLE_PREFIXES and not is_styled:
+        if word_lower.rstrip('.') in TITLE_PREFIXES:
             after_sentence_end = False
             continue
 
-        # Connector words break the n-gram (unless bold/italic)
+        # Connector words break the n-gram (unless styled)
         if word_lower in CONNECTOR_WORDS and not is_styled:
             if current_ngram:
                 names.append(" ".join(current_ngram))
@@ -291,7 +319,7 @@ def extract_names_from_tokens(
         after_sentence_end = False
 
         # All-caps words (section titles like "INTRODUCTION") handled as
-        # single tokens: skip unless bold/italic.
+        # single tokens: skip unless styled.
         if _is_all_caps_word(word) and not is_styled:
             if current_ngram:
                 names.append(" ".join(current_ngram))
@@ -507,11 +535,14 @@ class NameIndexingThread(QThread):
     indexing_finished = pyqtSignal(dict, dict)  # formatted_results, raw_results
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, pdf_path, page_numbering_strategy, offset=0):
+    def __init__(self, pdf_path, page_numbering_strategy, offset=0,
+                 include_bold=False, exclude_words=None):
         super().__init__()
         self.pdf_path = pdf_path
         self.strategy = page_numbering_strategy
         self.offset = offset
+        self.include_bold = include_bold
+        self.exclude_words = exclude_words or set()
         self._is_running = True
 
     def run(self):
@@ -532,7 +563,11 @@ class NameIndexingThread(QThread):
 
                 page = doc.load_page(i)
                 tokens = extract_styled_tokens(page)
-                raw_names = extract_names_from_tokens(tokens, discovery_mode=True)
+                raw_names = extract_names_from_tokens(
+                    tokens, discovery_mode=True,
+                    include_bold=self.include_bold,
+                    exclude_words=self.exclude_words,
+                )
                 names = filter_names(raw_names)
                 name_vocabulary.update(names)
 
@@ -601,6 +636,13 @@ class NameIndexingThread(QThread):
             for group in groups:
                 entries = resolve_group_pages(group)
                 raw_results.update(entries)
+
+            # Remove any entries matching user-excluded words
+            if self.exclude_words:
+                raw_results = {
+                    k: v for k, v in raw_results.items()
+                    if k.lower() not in self.exclude_words
+                }
 
             self.progress_updated.emit(90)
 

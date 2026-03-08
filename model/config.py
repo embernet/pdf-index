@@ -10,7 +10,9 @@ class ConfigManager:
         "capitalize": False,
         "view_source": False,
         "fit_width": True,
-        "name_indexing": False
+        "name_indexing": False,
+        "bold_indexing": False,
+        "name_exclude_list": ""
     }
 
     @staticmethod
