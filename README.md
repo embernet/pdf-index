@@ -8,7 +8,8 @@ A desktop application for creating back-of-the-book style indexes from PDF files
 - **Word Cloud** -- Generate a visual word cloud from the PDF text. Existing keywords are highlighted in green. Click any word in the cloud to add or remove it as a keyword.
 - **Multiple Output Formats** -- Export the index as Markdown, plain text, HTML, or an interactive HTML file with clickable links that jump to the corresponding PDF page.
 - **Page Numbering** -- Supports logical page labels (as defined in the PDF) or physical page numbering with an optional offset for front matter.
-- **PDF Viewer** -- Built-in viewer with text selection so you can highlight text and add it as a keyword directly.
+- **Name Indexing** -- Optionally detect proper nouns automatically. Capitalised words and multi-word names are discovered from mid-sentence usage, then every occurrence (including sentence-initial) is indexed. Variations are consolidated under the longest form with surname-first formatting.
+- **PDF Viewer** -- Built-in viewer with fit-width mode. Double-click any word to add it as a keyword, or select a phrase and right-click to add it. Clicking a page number in the Active output format jumps to that page and highlights the term.
 - **Project Management** -- Organize work into project folders. Each project stores its PDF, keywords, configuration, and generated output files.
 
 ## Requirements
@@ -44,6 +45,7 @@ pdf-index/
 │   └── main_controller.py   # Orchestrates UI, indexing, and project state
 ├── model/
 │   ├── indexer.py            # PDF search and index generation
+│   ├── name_indexer.py       # Automatic proper-noun indexing
 │   ├── tag_cloud.py          # Word cloud generation
 │   ├── config.py             # Per-project configuration
 │   └── app_config.py         # Application-wide settings
