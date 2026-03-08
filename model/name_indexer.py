@@ -457,20 +457,25 @@ def extract_names_from_tokens(
             after_sentence_end = False
             continue
 
-        # Filter: Roman numerals — unconditional
+        # Filter: Roman numerals — unconditional.
+        # Do NOT reset after_sentence_end: a Roman numeral (e.g. a
+        # chapter/section marker) between a period and the next word is
+        # not real sentence content.
         if _is_roman_numeral(word):
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
-            after_sentence_end = False
             continue
 
-        # Filter: number-like tokens
+        # Filter: number-like tokens.
+        # Do NOT reset after_sentence_end: a number sitting between a
+        # sentence-ending period and the next word is almost always a
+        # footnote reference (e.g. "…something.75 Once upon a time").
+        # Clearing the flag here would make "Once" look mid-sentence.
         if _is_number_like(word):
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
-            after_sentence_end = False
             continue
 
         # Title prefixes: skip the word but keep building the n-gram
