@@ -4,7 +4,7 @@ import string
 from view.main_window import MainWindow
 from model.indexer import IndexingThread
 from model.app_config import AppConfigManager
-from model.tag_cloud import TagCloudThread
+from model.tag_cloud import TagCloudThread, recolor_wordcloud
 from model.name_indexer import NameIndexingThread
 from PyQt6.QtWidgets import QFileDialog, QApplication
 
@@ -16,6 +16,7 @@ class MainController:
         self.indexing_thread = None
         self.name_indexing_thread = None
         self.tag_cloud_thread = None
+        self._cached_wordcloud = None  # Cached WordCloud for fast recolor
 
         # Dual-thread merge state
         self._keyword_indexing_done = True
@@ -83,7 +84,9 @@ class MainController:
 
     def setup_project(self, dir_path):
         from model.config import ConfigManager
-        
+
+        self._cached_wordcloud = None  # Invalidate on project change
+
         # Update App Config (Recent History)
         AppConfigManager.add_recent_project(dir_path)
         
@@ -170,26 +173,29 @@ class MainController:
                     return
 
             self.current_pdf_path = file_path
+            self._cached_wordcloud = None  # Invalidate on PDF change
             self.view.pdf_viewer.load_document(self.current_pdf_path)
-            
+
             # Save config immediately to persist PDF reference
             self.save_current_config()
 
     def save_keywords(self, text):
         if not self.project_path:
-            return 
-            
+            return
+
         kw_path = os.path.join(self.project_path, "keywords.txt")
         try:
             with open(kw_path, 'w', encoding='utf-8') as f:
                 f.write(text)
         except Exception as e:
             print(f"Error saving keywords: {e}")
-            
-        # If in cloud mode, refresh to update colors (green vs black)
-        # Note: If triggered by cloud click, we want this.
+
+        # If in cloud mode, refresh colors (green vs black)
         if self.view.controls_output.radio_cloud.isChecked():
-            self.generate_tag_cloud()
+            if self._cached_wordcloud is not None:
+                self._recolor_cached_cloud()
+            else:
+                self.generate_tag_cloud()
 
     def load_keywords(self):
         if not self.project_path:
@@ -437,7 +443,8 @@ class MainController:
         self.tag_cloud_thread.error.connect(self.on_cloud_error)
         self.tag_cloud_thread.start()
 
-    def on_cloud_generated(self, image, layout):
+    def on_cloud_generated(self, image, layout, wc):
+        self._cached_wordcloud = wc
         self.view.controls_output.progress_bar.setVisible(False)
         self.view.controls_output.set_output("", "tag_cloud")
         self.view.controls_output.set_cloud_data(image, layout)
@@ -445,6 +452,15 @@ class MainController:
     def on_cloud_error(self, err):
         self.view.controls_output.progress_bar.setVisible(False)
         self.view.show_error(f"Error generating tag cloud: {err}")
+
+    def _recolor_cached_cloud(self):
+        """Recolor the cached WordCloud without regenerating layout."""
+        if self._cached_wordcloud is None:
+            return
+        keywords = self.view.keyword_editor.get_keywords()
+        q_img, layout_data = recolor_wordcloud(self._cached_wordcloud, keywords)
+        self.view.controls_output.set_output("", "tag_cloud")
+        self.view.controls_output.set_cloud_data(q_img, layout_data)
 
     def on_cloud_word_clicked(self, word):
         # Toggle: Add or Remove

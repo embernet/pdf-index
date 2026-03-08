@@ -7,8 +7,56 @@ from PyQt6.QtGui import QImage, QColor
 from wordcloud import WordCloud, STOPWORDS
 import traceback
 
+def recolor_wordcloud(wc, existing_keywords):
+    """Recolor a cached WordCloud without changing layout. Returns (QImage, layout_data)."""
+    keyword_set = {k.lower() for k in existing_keywords}
+
+    def color_func(word, font_size, position, orientation, random_state=None, **kwargs):
+        if word.lower() in keyword_set:
+            return "green"
+        return "black"
+
+    wc.recolor(color_func=color_func)
+
+    pil_img = wc.to_image()
+    if pil_img.mode != "RGB":
+        pil_img = pil_img.convert("RGB")
+
+    data = pil_img.tobytes("raw", "RGB")
+    q_img = QImage(data, pil_img.width, pil_img.height, QImage.Format.Format_RGB888)
+    q_img = q_img.copy()  # Detach from local buffer
+
+    # Rebuild layout_data from wc.layout_
+    from PIL import ImageFont, ImageDraw, Image
+    font_path = wc.font_path
+    layout_data = []
+
+    for item in wc.layout_:
+        word_or_tuple, size, position, orientation, color = item
+        if isinstance(word_or_tuple, tuple):
+            word = word_or_tuple[0]
+        else:
+            word = word_or_tuple
+        y, x = position
+
+        font = ImageFont.truetype(font_path, int(size))
+        dummy_img = Image.new('RGB', (1, 1))
+        draw = ImageDraw.Draw(dummy_img)
+        bbox = draw.textbbox((x, y), word, font=font, anchor="lt")
+        w = bbox[2] - bbox[0]
+        h = bbox[3] - bbox[1]
+
+        layout_data.append({
+            "word": word,
+            "rect": (x, y, w, h),
+            "orientation": orientation
+        })
+
+    return q_img, layout_data
+
+
 class TagCloudThread(QThread):
-    finished = pyqtSignal(object, list) # QImage, layout list
+    finished = pyqtSignal(object, list, object) # QImage, layout list, WordCloud obj
     error = pyqtSignal(str)
     
     def __init__(self, pdf_path, existing_keywords):
@@ -90,7 +138,7 @@ class TagCloudThread(QThread):
                     "orientation": orientation
                 })
 
-            self.finished.emit(q_img, layout_data)
+            self.finished.emit(q_img, layout_data, wc)
             
         except Exception as e:
             traceback.print_exc()
