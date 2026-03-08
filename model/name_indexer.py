@@ -156,6 +156,10 @@ NON_PERSON_NAME_WORDS = {
     # Political / administrative
     "state", "city", "county", "district", "republic", "kingdom",
     "empire", "province", "territory",
+    # Academic / professional titles and roles
+    "professor", "lecturer", "dean", "chancellor", "provost",
+    "director", "president", "chairman", "chairwoman",
+    "secretary", "minister", "ambassador", "governor",
 }
 
 # Regex for detecting Roman numerals.
@@ -194,6 +198,18 @@ class NameGroup:
 def _is_punctuation(text: str) -> bool:
     """Return True if *text* consists entirely of punctuation characters."""
     return all(unicodedata.category(ch).startswith('P') or ch in '()[]{}' for ch in text)
+
+
+# Regex matching footnote-reference-like tokens: digits and/or common
+# footnote symbols (†, ‡, §, ¶, *).  Only these should be skipped when
+# they carry the superscript flag — real words that happen to share a
+# superscript span (common in footnote body text) must be kept.
+_FOOTNOTE_REF_RE = re.compile(r'^[\d†‡§¶*]+$')
+
+
+def _is_footnote_ref(text: str) -> bool:
+    """Return True if *text* looks like a footnote reference number/symbol."""
+    return bool(_FOOTNOTE_REF_RE.match(text))
 
 
 def _last_text_char(block) -> str:
@@ -390,8 +406,11 @@ def extract_names_from_tokens(
         if not word:
             continue
 
-        # Skip superscript (footnote numbers)
-        if token.is_superscript:
+        # Skip superscript footnote reference numbers (e.g. "75", "†").
+        # Real words that happen to be in a superscript span (common when
+        # the PDF groups footnote body text with the reference marker) are
+        # kept so that names in footnotes are indexed correctly.
+        if token.is_superscript and _is_footnote_ref(word):
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
@@ -526,13 +545,13 @@ def find_known_names_in_tokens(
     sentence position.  Returns a list of matched names (original casing
     from the vocabulary)."""
 
-    # Build a list of "word" tokens (skip punct / superscript / structural)
+    # Build a list of "word" tokens (skip punct / footnote refs / structural)
     word_tokens: List[str] = []
     for token in tokens:
         word = token.text.strip()
         if not word:
             continue
-        if token.is_superscript:
+        if token.is_superscript and _is_footnote_ref(word):
             continue
         if _is_punctuation(word):
             # Insert a sentinel to prevent cross-sentence matching
@@ -553,10 +572,12 @@ def find_known_names_in_tokens(
             continue
         # Try n-grams from longest to shortest for greedy matching
         for length in range(min(max_ngram_len, n_tokens - i), 0, -1):
-            # Check no sentinel in span
+            # Check no sentinel in span — skip this length but keep
+            # trying shorter ones (a shorter span may not cross the
+            # punctuation boundary).
             span = word_tokens[i:i + length]
             if None in span:
-                break
+                continue
             candidate = " ".join(span)
             canon = known_names_lower.get(candidate.lower())
             if canon is not None:
@@ -610,6 +631,54 @@ def is_contiguous_subsequence(short_words: List[str], long_words: List[str]) -> 
     return False
 
 
+def _should_consolidate(short_words: List[str], long_words: List[str]) -> bool:
+    """Decide whether the shorter n-gram should be consolidated under the
+    longer one.
+
+    Consolidation makes sense when the short form is a component of a
+    proper name that the long form spells out more fully, e.g.:
+
+        "Smith"  →  "John Smith"      (surname → full name)
+        "Ben"    →  "Ben Powell"      (first name → full name)
+
+    It does NOT make sense when the short form is an independent place or
+    entity that merely appears next to a generic descriptor, e.g.:
+
+        "Cambridge" should NOT be absorbed by "Cambridge Professor"
+        "Dublin"    should NOT be absorbed by "Dublin International"
+
+    Heuristic: a single-word short form is consolidated only if it appears
+    as the LAST word of the long form (surname position) OR if none of the
+    OTHER words in the long form are generic descriptors found in
+    NON_PERSON_NAME_WORDS / CONNECTOR_WORDS / common lowercase-origin words.
+    Multi-word short forms (≥2 words) are always consolidated when they are
+    contiguous subsequences, as they are specific enough to be true
+    variations (e.g. "Jenny Macmillan" inside "Dr Jenny Macmillan").
+    """
+    if len(short_words) >= 2:
+        # Multi-word short forms are specific enough to consolidate
+        return True
+
+    # Single-word short form: find where it sits in the long form
+    short_lower = short_words[0].lower()
+    for idx, lw in enumerate(long_words):
+        if lw.lower() == short_lower:
+            if idx == len(long_words) - 1:
+                # Last word (surname position) — always consolidate
+                return True
+            # First or middle word — only consolidate if the remaining
+            # words look like parts of a proper name, NOT generic titles
+            # or descriptors.
+            other_words = [w for j, w in enumerate(long_words) if j != idx]
+            if any(w.lower() in NON_PERSON_NAME_WORDS for w in other_words):
+                return False
+            return True
+
+    # Shouldn't reach here if is_contiguous_subsequence was True, but
+    # fall back to not consolidating.
+    return False
+
+
 def build_ngram_groups(
     all_occurrences: Dict[str, List[Tuple[int, str]]]
 ) -> List[NameGroup]:
@@ -641,7 +710,8 @@ def build_ngram_groups(
             other_words = other.split()
             if len(other_words) >= len(term_words):
                 continue
-            if is_contiguous_subsequence(other_words, term_words):
+            if is_contiguous_subsequence(other_words, term_words) and \
+               _should_consolidate(other_words, term_words):
                 group.variations.add(other)
                 group.occurrences_by_variation[other] = all_occurrences[other]
                 assigned[other] = term
