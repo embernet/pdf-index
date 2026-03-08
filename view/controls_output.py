@@ -163,6 +163,7 @@ class ControlsOutput(QWidget):
         # Stacked widgets manually managed via visibility
         self.output_text = QTextBrowser()
         self.output_text.setOpenExternalLinks(False)
+        self.output_text.setOpenLinks(False)
         self.output_text.anchorClicked.connect(self.handle_link_click)
         self.output_text.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.output_text.customContextMenuRequested.connect(self.show_output_context_menu)
