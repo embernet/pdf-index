@@ -331,6 +331,7 @@ class MainController:
         # Using IndexingThread.process_results logic
         formatted = IndexingThread.process_results(None, self.last_raw_results, capitalize_keys=capitalize)
         self.last_formatted_results = formatted
+        self.view.controls_output.entry_count_label.setText(f"{len(formatted)} entries")
         
         # Save files
         if self.project_path:

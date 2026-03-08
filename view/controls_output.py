@@ -108,6 +108,9 @@ class ControlsOutput(QWidget):
         self.create_btn = QPushButton("Create Index")
         self.create_btn.clicked.connect(self.create_index_requested.emit)
         self.controls_layout.addWidget(self.create_btn)
+
+        self.entry_count_label = QLabel("")
+        self.controls_layout.addWidget(self.entry_count_label)
         
         self.layout.addLayout(self.controls_layout)
 
