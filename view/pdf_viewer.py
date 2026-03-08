@@ -260,30 +260,41 @@ class PDFViewer(QWidget):
     def highlight_term(self, term):
         """Highlight all occurrences of term on the current page."""
         import unicodedata
-        term_normalized = unicodedata.normalize("NFKC", term).lower()
-        term_words = term_normalized.split()
 
         words = self.image_label.words
-        if not words or not term_words:
+        if not words or not term:
             return
 
-        indices = []
-        n = len(term_words)
+        term_normalized = unicodedata.normalize("NFKC", term).lower()
 
-        for i in range(len(words) - n + 1):
-            match = True
-            for j in range(n):
-                word_text = unicodedata.normalize("NFKC", words[i + j][4]).lower()
-                # Strip punctuation for matching
-                word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
-                target_stripped = term_words[j].strip('.,;:!?()[]{}"\'-/')
-                if word_stripped != target_stripped:
-                    match = False
-                    break
-            if match:
-                indices.extend(range(i, i + n))
+        # Build search variants: original term + reversed "Last, First" → "First Last"
+        search_variants = [term_normalized.split()]
+        if ", " in term_normalized:
+            parts = term_normalized.split(", ", 1)
+            reversed_term = parts[1] + " " + parts[0]
+            search_variants.append(reversed_term.split())
 
-        self.image_label.set_highlights(indices)
+        indices = set()
+
+        for term_words in search_variants:
+            if not term_words:
+                continue
+            n = len(term_words)
+            for i in range(len(words) - n + 1):
+                match = True
+                for j in range(n):
+                    word_text = unicodedata.normalize("NFKC", words[i + j][4]).lower()
+                    # Strip punctuation for matching
+                    word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
+                    target_stripped = term_words[j].strip('.,;:!?()[]{}"\'-/')
+                    if word_stripped != target_stripped:
+                        match = False
+                        break
+                if match:
+                    for idx in range(i, i + n):
+                        indices.add(idx)
+
+        self.image_label.set_highlights(sorted(indices))
 
     def set_fit_width(self, enabled):
         self.fit_width_chk.setChecked(enabled)
