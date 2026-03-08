@@ -7,6 +7,15 @@ from PyQt6.QtGui import QImage, QColor
 from wordcloud import WordCloud, STOPWORDS
 import traceback
 
+EXTRA_STOPWORDS = {
+    "http", "https",
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+    "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "mon", "tue", "wed", "thu", "fri", "sat", "sun",
+}
+
 def recolor_wordcloud(wc, existing_keywords):
     """Recolor a cached WordCloud without changing layout. Returns (QImage, layout_data)."""
     keyword_set = {k.lower() for k in existing_keywords}
@@ -17,6 +26,12 @@ def recolor_wordcloud(wc, existing_keywords):
         return "black"
 
     wc.recolor(color_func=color_func)
+    return generate_cloud_image(wc)
+
+
+def generate_cloud_image(wc):
+    """Convert a WordCloud to (QImage, layout_data). Shared helper."""
+    from PIL import ImageFont, ImageDraw, Image
 
     pil_img = wc.to_image()
     if pil_img.mode != "RGB":
@@ -26,8 +41,6 @@ def recolor_wordcloud(wc, existing_keywords):
     q_img = QImage(data, pil_img.width, pil_img.height, QImage.Format.Format_RGB888)
     q_img = q_img.copy()  # Detach from local buffer
 
-    # Rebuild layout_data from wc.layout_
-    from PIL import ImageFont, ImageDraw, Image
     font_path = wc.font_path
     layout_data = []
 
@@ -84,63 +97,59 @@ class TagCloudThread(QThread):
                 height=600, 
                 background_color="white",
                 color_func=color_func,
-                stopwords=STOPWORDS | self.custom_stopwords,
+                stopwords=STOPWORDS | EXTRA_STOPWORDS | self.custom_stopwords,
                 min_font_size=10,
                 max_font_size=100,
                 prefer_horizontal=0.9
             )
             
             wc.generate(full_text)
-            
-            # Convert to QImage using PIL (avoids numpy asarray issues in some environments)
-            pil_img = wc.to_image()
-            
-            # Ensure RGB
-            if pil_img.mode != "RGB":
-                pil_img = pil_img.convert("RGB")
-                
-            data = pil_img.tobytes("raw", "RGB")
-            
-            q_img = QImage(data, pil_img.width, pil_img.height, QImage.Format.Format_RGB888)
-            q_img = q_img.copy() # Detach from local buffer
-            
-            # Extract Layout for Click Detection
-            font_path = wc.font_path
-            from PIL import ImageFont, ImageDraw, Image
-            
-            layout_data = []
 
-            for item in wc.layout_:
-                # layout_ item varies by wordcloud version:
-                #   newer: ((word, count), size, position=(y,x), orientation, color)
-                #   older: (word, size, position=(y,x), orientation, color)
-                word_or_tuple, size, position, orientation, color = item
-                if isinstance(word_or_tuple, tuple):
-                    word = word_or_tuple[0]
-                else:
-                    word = word_or_tuple
-                y, x = position
-                
-                # Re-calculate bounding box
-                font = ImageFont.truetype(font_path, int(size))
-                
-                # Dummy draw
-                dummy_img = Image.new('RGB', (1, 1))
-                draw = ImageDraw.Draw(dummy_img)
-                
-                bbox = draw.textbbox((x, y), word, font=font, anchor="lt")
-                # (left, top, right, bottom)
-                w = bbox[2] - bbox[0]
-                h = bbox[3] - bbox[1]
-                
-                layout_data.append({
-                    "word": word,
-                    "rect": (x, y, w, h), # x,y is top-left
-                    "orientation": orientation
-                })
-
+            q_img, layout_data = generate_cloud_image(wc)
             self.finished.emit(q_img, layout_data, wc)
             
+        except Exception as e:
+            traceback.print_exc()
+            self.error.emit(str(e))
+
+
+class IndexCloudThread(QThread):
+    """Generate a word cloud from index results, sized by page count."""
+    finished = pyqtSignal(object, list)  # QImage, layout list
+    error = pyqtSignal(str)
+
+    def __init__(self, raw_results):
+        super().__init__()
+        # raw_results: {term: [(page_idx, label), ...]}
+        self.raw_results = raw_results
+
+    def run(self):
+        try:
+            # Build frequency dict: term → number of pages
+            frequencies = {}
+            for term, pages in self.raw_results.items():
+                if pages:
+                    frequencies[term] = len(pages)
+
+            if not frequencies:
+                self.error.emit("No index entries to display.")
+                return
+
+            wc = WordCloud(
+                width=800,
+                height=600,
+                background_color="white",
+                min_font_size=10,
+                max_font_size=100,
+                prefer_horizontal=0.9,
+                color_func=lambda *args, **kwargs: "black",
+            )
+
+            wc.generate_from_frequencies(frequencies)
+
+            q_img, layout_data = generate_cloud_image(wc)
+            self.finished.emit(q_img, layout_data)
+
         except Exception as e:
             traceback.print_exc()
             self.error.emit(str(e))

@@ -2,7 +2,8 @@ import os
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QSplitter, QFileDialog, QMenuBar,
-    QMenu, QLabel, QVBoxLayout, QSizePolicy, QPushButton, QTextBrowser
+    QMenu, QLabel, QVBoxLayout, QSizePolicy, QPushButton, QTextBrowser,
+    QProgressBar
 )
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
@@ -36,6 +37,12 @@ class MainWindow(QMainWindow):
         self.version_label.setStyleSheet("font-weight: bold; color: #555;")
         header_layout.addWidget(self.version_label)
         header_layout.addStretch()
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setFixedWidth(200)
+        self.progress_bar.setFixedHeight(16)
+        header_layout.addWidget(self.progress_bar)
 
         self.help_btn = QPushButton("? Help")
         self.help_btn.setCheckable(True)
@@ -158,6 +165,11 @@ class MainWindow(QMainWindow):
             self.left_layout.setStretchFactor(panel, stretch)
 
     # ------------------------------------------------------------------
+
+    def set_progress(self, value):
+        self.progress_bar.setValue(value)
+        if value >= 100:
+            self.progress_bar.setVisible(False)
 
     def show_error(self, message):
         from PyQt6.QtWidgets import QMessageBox

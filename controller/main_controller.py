@@ -1,10 +1,11 @@
+import json
 import os
 import shutil
 import string
 from view.main_window import MainWindow
 from model.indexer import IndexingThread
 from model.app_config import AppConfigManager
-from model.tag_cloud import TagCloudThread, recolor_wordcloud
+from model.tag_cloud import TagCloudThread, IndexCloudThread, recolor_wordcloud
 from model.name_indexer import NameIndexingThread, DEFAULT_STOPWORDS
 from PyQt6.QtWidgets import QFileDialog, QApplication
 
@@ -16,6 +17,7 @@ class MainController:
         self.indexing_thread = None
         self.name_indexing_thread = None
         self.tag_cloud_thread = None
+        self.index_cloud_thread = None
         self._cached_wordcloud = None  # Cached WordCloud for fast recolor
 
         # Dual-thread merge state
@@ -37,9 +39,8 @@ class MainController:
         
         # Controls & Output
         self.view.controls_output.create_index_requested.connect(self.start_indexing)
-        # Format toggles + Active View + Capitalize
-        bg = self.view.controls_output.format_bg
-        bg.buttonToggled.connect(self.update_output_display)
+        # View tab toggles + Active View + Capitalize
+        self.view.controls_output.view_tabs.currentChanged.connect(self.update_output_display)
         self.view.controls_output.view_source_chk.toggled.connect(self.update_output_display)
         self.view.controls_output.capitalize_chk.toggled.connect(self.update_output_display_toggle)
         
@@ -131,9 +132,27 @@ class MainController:
         # Ensure config is freshly saved
         self.save_current_config()
 
+        # Load existing index if available, otherwise auto-create
+        index_path = os.path.join(dir_path, "index.json")
+        if os.path.exists(index_path):
+            try:
+                with open(index_path, 'r', encoding='utf-8') as f:
+                    self.last_raw_results = json.load(f)
+                self.process_and_display_results()
+                self._auto_highlight_current_page()
+            except Exception as e:
+                print(f"Error loading index: {e}")
+                self.last_raw_results = None
+        elif self.current_pdf_path:
+            # No index yet but a PDF is loaded — auto-create
+            self.start_indexing()
+
         # If loading directly into cloud view, trigger it
-        if config.get("view_mode") == "tag_cloud":
+        mode = config.get("view_mode")
+        if mode == "tag_cloud":
             self.generate_tag_cloud()
+        elif mode == "index_cloud":
+            self.generate_index_cloud()
 
     def save_current_config(self):
         if not self.project_path:
@@ -145,11 +164,7 @@ class MainController:
         strat = ctrl.get_strategy()
         offset = ctrl.get_offset()
         
-        mode = "markdown"
-        if ctrl.radio_txt.isChecked(): mode = "text"
-        elif ctrl.radio_html.isChecked(): mode = "html"
-        elif ctrl.radio_active.isChecked(): mode = "active"
-        elif ctrl.radio_cloud.isChecked(): mode = "tag_cloud"
+        mode = ctrl.get_view_mode()
         
         config = {
             "pdf_filename": os.path.basename(self.current_pdf_path) if self.current_pdf_path else None,
@@ -204,7 +219,7 @@ class MainController:
             print(f"Error saving keywords: {e}")
 
         # If in cloud mode, refresh colors (green vs black)
-        if self.view.controls_output.radio_cloud.isChecked():
+        if self.view.controls_output.get_view_mode() == "tag_cloud":
             if self._cached_wordcloud is not None:
                 self._recolor_cached_cloud()
             else:
@@ -317,8 +332,8 @@ class MainController:
         offset = self.view.controls_output.get_offset()
 
         self.view.controls_output.create_btn.setEnabled(False)
-        self.view.controls_output.progress_bar.setValue(0)
-        self.view.controls_output.progress_bar.setVisible(True)
+        self.view.progress_bar.setValue(0)
+        self.view.progress_bar.setVisible(True)
 
         # Reset merge state
         self._pending_keyword_raw = None
@@ -332,7 +347,7 @@ class MainController:
                 self.current_pdf_path, keywords, strategy, offset
             )
             self.indexing_thread.progress_updated.connect(
-                self.view.controls_output.set_progress
+                self.view.set_progress
             )
             self.indexing_thread.indexing_finished.connect(
                 self._on_keyword_indexing_finished
@@ -354,7 +369,7 @@ class MainController:
             # Only connect progress if keyword thread is not also running
             if not has_keywords:
                 self.name_indexing_thread.progress_updated.connect(
-                    self.view.controls_output.set_progress
+                    self.view.set_progress
                 )
             self.name_indexing_thread.indexing_finished.connect(
                 self._on_name_indexing_finished
@@ -365,7 +380,7 @@ class MainController:
     def on_indexing_error(self, message):
         self.view.show_error(f"Indexing failed: {message}")
         self.view.controls_output.create_btn.setEnabled(True)
-        self.view.controls_output.progress_bar.setVisible(False)
+        self.view.progress_bar.setVisible(False)
 
     def _on_keyword_indexing_finished(self, formatted_results, raw_results):
         self._pending_keyword_raw = raw_results
@@ -434,7 +449,7 @@ class MainController:
         md_content = self.generate_markdown(results)
         txt_content = self.generate_text(results)
         html_content = self.generate_html(results)
-        
+
         base = os.path.join(self.project_path, "index")
         with open(base + ".md", 'w', encoding='utf-8') as f:
             f.write(md_content)
@@ -443,34 +458,43 @@ class MainController:
         with open(base + ".html", 'w', encoding='utf-8') as f:
             f.write(html_content)
 
-    def update_output_display(self):
+        # Persist raw results so the index can be restored on next open
+        if self.last_raw_results is not None:
+            with open(base + ".json", 'w', encoding='utf-8') as f:
+                json.dump(self.last_raw_results, f, indent=2)
+
+    def update_output_display(self, *args):
         ctrl = self.view.controls_output
         self.save_current_config()
-        
-        is_cloud = ctrl.radio_cloud.isChecked()
-        if is_cloud:
+
+        mode = ctrl.get_view_mode()
+
+        if mode == "tag_cloud":
             self.generate_tag_cloud()
             return
-            
+        if mode == "index_cloud":
+            self.generate_index_cloud()
+            return
+
         if not self.last_formatted_results:
             return
 
         content = ""
         format_type = 'text'
-        
-        if ctrl.radio_md.isChecked():
+
+        if mode == "markdown":
             content = self.generate_markdown(self.last_formatted_results)
             format_type = 'markdown'
-        elif ctrl.radio_txt.isChecked():
+        elif mode == "text":
             content = self.generate_text(self.last_formatted_results)
             format_type = 'text'
-        elif ctrl.radio_html.isChecked():
+        elif mode == "html":
             content = self.generate_html(self.last_formatted_results)
             format_type = 'html'
-        elif ctrl.radio_active.isChecked():
+        elif mode == "active":
             content = self.generate_active_html(self.last_formatted_results)
             format_type = 'active'
-            
+
         ctrl.set_output(content, format_type)
 
     def generate_tag_cloud(self):
@@ -483,8 +507,8 @@ class MainController:
         stopwords = {w.lower() for w in self.view.stopwords_editor.get_words()}
         custom_stopwords = exclude_words | stopwords
 
-        self.view.controls_output.progress_bar.setVisible(True)
-        self.view.controls_output.progress_bar.setValue(0) # Pulse
+        self.view.progress_bar.setVisible(True)
+        self.view.progress_bar.setValue(0) # Pulse
 
         self.tag_cloud_thread = TagCloudThread(self.current_pdf_path, keywords, custom_stopwords)
         self.tag_cloud_thread.finished.connect(self.on_cloud_generated)
@@ -493,13 +517,31 @@ class MainController:
 
     def on_cloud_generated(self, image, layout, wc):
         self._cached_wordcloud = wc
-        self.view.controls_output.progress_bar.setVisible(False)
+        self.view.progress_bar.setVisible(False)
         self.view.controls_output.set_output("", "tag_cloud")
         self.view.controls_output.set_cloud_data(image, layout)
 
     def on_cloud_error(self, err):
-        self.view.controls_output.progress_bar.setVisible(False)
+        self.view.progress_bar.setVisible(False)
         self.view.show_error(f"Error generating tag cloud: {err}")
+
+    def generate_index_cloud(self):
+        if not self.last_raw_results:
+            self.view.controls_output.set_output("", "index_cloud")
+            return
+
+        self.view.progress_bar.setVisible(True)
+        self.view.progress_bar.setValue(0)
+
+        self.index_cloud_thread = IndexCloudThread(self.last_raw_results)
+        self.index_cloud_thread.finished.connect(self.on_index_cloud_generated)
+        self.index_cloud_thread.error.connect(self.on_cloud_error)
+        self.index_cloud_thread.start()
+
+    def on_index_cloud_generated(self, image, layout):
+        self.view.progress_bar.setVisible(False)
+        self.view.controls_output.set_output("", "index_cloud")
+        self.view.controls_output.set_cloud_data(image, layout)
 
     def _recolor_cached_cloud(self):
         """Recolor the cached WordCloud without regenerating layout."""

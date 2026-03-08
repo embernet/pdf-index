@@ -1,6 +1,10 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QProgressBar, QTextEdit, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea, QTabBar
 from PyQt6.QtCore import pyqtSignal, Qt, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QAction, QTextCursor
+
+TAB_MODES = ["active", "markdown", "text", "html", "tag_cloud", "index_cloud"]
+TAB_LABELS = ["Active", "Markdown", "Text", "HTML", "Tag Cloud", "Index Cloud"]
+SOURCE_TABS = {"markdown", "text", "html", "active"}
 
 class CloudLabel(QLabel):
     word_clicked = pyqtSignal(str)
@@ -124,43 +128,24 @@ class ControlsOutput(QWidget):
 
         self.layout.addLayout(self.name_options_layout)
 
-        # Progress Bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.layout.addWidget(self.progress_bar)
-        
         # Output Area
         self.output_layout = QVBoxLayout()
         
-        # Format Options
-        self.format_layout = QHBoxLayout()
-        self.format_bg = QButtonGroup(self)
-        self.radio_md = QRadioButton("Markdown")
-        self.radio_txt = QRadioButton("Text")
-        self.radio_html = QRadioButton("HTML")
-        self.radio_active = QRadioButton("Active")
-        self.radio_cloud = QRadioButton("Tag Cloud")
-        
-        self.format_bg.addButton(self.radio_md)
-        self.format_bg.addButton(self.radio_txt)
-        self.format_bg.addButton(self.radio_html)
-        self.format_bg.addButton(self.radio_active)
-        self.format_bg.addButton(self.radio_cloud)
-        
-        self.radio_md.setChecked(True)
-        
-        self.format_layout.addWidget(QLabel("View As:"))
-        self.format_layout.addWidget(self.radio_md)
-        self.format_layout.addWidget(self.radio_txt)
-        self.format_layout.addWidget(self.radio_html)
-        self.format_layout.addWidget(self.radio_active)
-        self.format_layout.addWidget(self.radio_cloud)
-        
+        # View Tabs
+        self.view_tabs = QTabBar()
+        self.view_tabs.setExpanding(False)
+        for label in TAB_LABELS:
+            self.view_tabs.addTab(label)
+        self.view_tabs.setCurrentIndex(0)
+        self.view_tabs.currentChanged.connect(self._on_tab_changed)
+
         self.view_source_chk = QCheckBox("View Source")
-        self.format_layout.addStretch()
-        self.format_layout.addWidget(self.view_source_chk)
-        
-        self.output_layout.addLayout(self.format_layout)
+
+        tab_layout = QHBoxLayout()
+        tab_layout.addWidget(self.view_tabs, 1)
+        tab_layout.addWidget(self.view_source_chk)
+
+        self.output_layout.addLayout(tab_layout)
         
         # Stacked widgets manually managed via visibility
         self.output_text = QTextBrowser()
@@ -184,21 +169,12 @@ class ControlsOutput(QWidget):
         
         self.layout.addLayout(self.output_layout)
 
-    def set_progress(self, value):
-        self.progress_bar.setValue(value)
-        if value >= 100:
-            self.progress_bar.setVisible(False)
-
     def set_output(self, content, format_type='text'):
         # Hide all first
         self.output_text.setVisible(False)
         self.cloud_scroll.setVisible(False)
         
-        if format_type == 'tag_cloud':
-            # content is ignored here, confusing api but okay for now
-            # Actually we expect set_cloud_data to have been called?
-            # Or we pass special content?
-            # Let's assume controller handles data passing.
+        if format_type in ('tag_cloud', 'index_cloud'):
             self.cloud_scroll.setVisible(True)
             return
 
@@ -226,6 +202,14 @@ class ControlsOutput(QWidget):
 
     def get_offset(self):
         return self.offset_spin.value()
+
+    def get_view_mode(self):
+        idx = self.view_tabs.currentIndex()
+        return TAB_MODES[idx] if 0 <= idx < len(TAB_MODES) else "markdown"
+
+    def _on_tab_changed(self, index):
+        mode = TAB_MODES[index] if 0 <= index < len(TAB_MODES) else "markdown"
+        self.view_source_chk.setVisible(mode in SOURCE_TABS)
 
     def show_output_context_menu(self, pos):
         cursor = self.output_text.cursorForPosition(pos)
@@ -271,16 +255,10 @@ class ControlsOutput(QWidget):
         
         # Set View Mode
         mode = config.get("view_mode", "markdown")
-        if mode == "text":
-            self.radio_txt.setChecked(True)
-        elif mode == "html":
-            self.radio_html.setChecked(True)
-        elif mode == "active":
-            self.radio_active.setChecked(True)
-        elif mode == "tag_cloud":
-            self.radio_cloud.setChecked(True)
+        if mode in TAB_MODES:
+            self.view_tabs.setCurrentIndex(TAB_MODES.index(mode))
         else:
-            self.radio_md.setChecked(True)
+            self.view_tabs.setCurrentIndex(0)
             
         # Set Options
         self.capitalize_chk.setChecked(config.get("capitalize", False))
