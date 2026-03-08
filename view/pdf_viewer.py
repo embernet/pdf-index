@@ -236,6 +236,11 @@ class PDFViewer(QWidget):
         self.goto_edit.returnPressed.connect(self._on_goto_page)
 
         self.toolbar2_layout.addWidget(self.highlight_indexed_chk)
+
+        self.selection_count_label = QLabel()
+        self.selection_count_label.setStyleSheet("color: gray;")
+        self.toolbar2_layout.addWidget(self.selection_count_label)
+
         self.toolbar2_layout.addStretch()
         goto_label = QLabel("Go to:")
         self.toolbar2_layout.addWidget(goto_label)
@@ -252,6 +257,7 @@ class PDFViewer(QWidget):
         self.image_label.setMouseTracking(False) 
         self.image_label.word_double_clicked.connect(self.add_keyword_requested.emit)
         self.image_label.highlighted_word_clicked.connect(self.index_term_clicked.emit)
+        self.image_label.selection_changed.connect(self._on_selection_changed)
         
         self.scroll_area.setWidget(self.image_label)
         self.layout.addWidget(self.scroll_area)
@@ -429,6 +435,16 @@ class PDFViewer(QWidget):
             self.image_label.set_highlights([])
         else:
             self.page_changed.emit(self.current_page_index)
+
+    def _on_selection_changed(self):
+        text = self.image_label.get_selected_text().strip()
+        if not text or not self.doc:
+            self.selection_count_label.setText("")
+            return
+        count = 0
+        for page in self.doc:
+            count += len(page.search_for(text))
+        self.selection_count_label.setText(f"Selected text occurs {count} time{'s' if count != 1 else ''}")
 
     def _on_goto_page(self):
         text = self.goto_edit.text().strip()
