@@ -26,3 +26,7 @@ Thumbs.db
 
 # App config (user-specific)
 app_config.json
+
+# Node.js (not part of this project)
+package-lock.json
+node_modules/
