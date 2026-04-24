@@ -11,6 +11,7 @@ from PyQt6.QtCore import Qt
 from view.keyword_editor import KeywordEditor
 from view.exclude_editor import ExcludeEditor
 from view.stopwords_editor import StopwordsEditor
+from view.proper_names_editor import ProperNamesEditor
 from view.pdf_viewer import PDFViewer
 from view.controls_output import ControlsOutput
 from view.collapsible_panel import CollapsiblePanel
@@ -38,6 +39,10 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.version_label)
         header_layout.addStretch()
 
+        self.progress_label = QLabel("Creating index...")
+        self.progress_label.setVisible(False)
+        header_layout.addWidget(self.progress_label)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_bar.setFixedWidth(200)
@@ -62,16 +67,18 @@ class MainWindow(QMainWindow):
         self.splitter.setChildrenCollapsible(False)
         main_layout.addWidget(self.splitter, 1)  # stretch=1 so splitter gets all remaining space
 
-        # Left pane: collapsible panels for keywords, excludes, stopwords
+        # Left pane: collapsible panels for keywords, excludes, stopwords, proper names
         self.keyword_editor = KeywordEditor()
         self.exclude_editor = ExcludeEditor()
         self.stopwords_editor = StopwordsEditor()
+        self.proper_names_editor = ProperNamesEditor()
 
-        self.keyword_panel = CollapsiblePanel("Keywords", self.keyword_editor, expanded=True)
+        self.keyword_panel = CollapsiblePanel("Include List", self.keyword_editor, expanded=True)
         self.exclude_panel = CollapsiblePanel("Exclude List", self.exclude_editor, expanded=True)
         self.stopwords_panel = CollapsiblePanel("Stop Words", self.stopwords_editor, expanded=False)
+        self.proper_names_panel = CollapsiblePanel("Place/Thing Names", self.proper_names_editor, expanded=False)
 
-        self._panels = [self.keyword_panel, self.exclude_panel, self.stopwords_panel]
+        self._panels = [self.keyword_panel, self.exclude_panel, self.stopwords_panel, self.proper_names_panel]
         # Track expansion order (most-recently-expanded last)
         self._expand_order = [self.keyword_panel, self.exclude_panel]
 
@@ -166,10 +173,20 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
 
+    def show_progress(self, text="Creating index..."):
+        self.progress_label.setText(text)
+        self.progress_label.setVisible(True)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+
+    def hide_progress(self):
+        self.progress_bar.setVisible(False)
+        self.progress_label.setVisible(False)
+
     def set_progress(self, value):
         self.progress_bar.setValue(value)
         if value >= 100:
-            self.progress_bar.setVisible(False)
+            self.hide_progress()
 
     def show_error(self, message):
         from PyQt6.QtWidgets import QMessageBox

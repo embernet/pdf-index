@@ -2,9 +2,9 @@ import fitz
 import re
 import string
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from PyQt6.QtCore import QThread, pyqtSignal
 
 
@@ -132,7 +132,7 @@ DEFAULT_STOPWORDS = {
 }
 
 # Common English words that appear in organisation / place / event names
-# but are NOT plausible surnames.  Used by format_name_entry to avoid
+# but are NOT plausible surnames.  Used by _auto_classify_name to avoid
 # inverting names like "Dublin International" → "International, Dublin".
 NON_PERSON_NAME_WORDS = {
     # Geographic / directional
@@ -164,6 +164,12 @@ NON_PERSON_NAME_WORDS = {
     "professor", "lecturer", "dean", "chancellor", "provost",
     "director", "president", "chairman", "chairwoman",
     "secretary", "minister", "ambassador", "governor",
+    # Architectural / historical style adjectives — almost never person names
+    "baronial", "gothic", "medieval", "colonial", "baroque", "classical",
+    "neoclassical", "byzantine", "renaissance",
+    # Building types rarely used as surnames
+    "abbey", "barracks", "barn", "cottage", "estate", "farm",
+    "hamlet", "inn", "priory", "rectory", "vicarage",
 }
 
 # Regex for detecting Roman numerals.
@@ -214,6 +220,13 @@ _FOOTNOTE_REF_RE = re.compile(r'^[\d†‡§¶*]+$')
 def _is_footnote_ref(text: str) -> bool:
     """Return True if *text* looks like a footnote reference number/symbol."""
     return bool(_FOOTNOTE_REF_RE.match(text))
+
+
+def _strip_possessive(word: str) -> str:
+    """Strip a trailing possessive 's (ASCII or curly apostrophe) from a token."""
+    if word.endswith("'s") or word.endswith("’s"):
+        return word[:-2]
+    return word
 
 
 def _last_text_char(block) -> str:
@@ -429,6 +442,11 @@ def extract_names_from_tokens(
                 after_sentence_end = True
             continue
 
+        # Strip possessive suffix ("Hall's" → "Hall") before any further processing.
+        word = _strip_possessive(word)
+        if not word:
+            continue
+
         word_lower = word.lower()
         is_styled = (token.is_bold and include_bold) or token.is_italic
 
@@ -572,6 +590,9 @@ def find_known_names_in_tokens(
         if _is_punctuation(word):
             # Insert a sentinel to prevent cross-sentence matching
             word_tokens.append(None)
+            continue
+        word = _strip_possessive(word)
+        if not word:
             continue
         word_tokens.append(word)
 
@@ -780,19 +801,146 @@ def resolve_group_pages(
     return result
 
 
-def format_name_entry(name: str) -> str:
-    """Format for index display.
+def _auto_classify_name(name: str) -> str:
+    """Return 'place_thing' or 'person' based on the words in the name.
 
-    Two-word names that look like person names become 'Surname, Firstname'.
-    Names containing common organisational / geographical words (e.g.
-    "Dublin International", "National Museum") are left in natural order.
+    Only two-word names are ever inverted, so classification matters mainly
+    for those.  Single-word and three-plus-word names are returned as-is
+    regardless of this value.
     """
     words = name.split()
-    if len(words) == 2:
-        if any(w.lower() in NON_PERSON_NAME_WORDS for w in words):
-            return name
+    if len(words) == 2 and any(w.lower() in NON_PERSON_NAME_WORDS for w in words):
+        return "place_thing"
+    return "person"
+
+
+def _try_spacy_classify(
+    page_texts: List[str],
+    name_vocabulary: Set[str],
+    progress_callback=None,
+    progress_start: int = 0,
+    progress_end: int = 100,
+) -> Dict[str, str]:
+    """Use spaCy NER to classify multi-word names as 'person' or 'place_thing'.
+
+    *page_texts* is the pre-collected plain text for each page.  Runs entity
+    recognition over every page and counts how often each name in
+    *name_vocabulary* is labelled as PERSON vs a place/organisation type.
+    Returns {name: type} for names where a clear majority (>=60%) of mentions
+    agree.
+
+    *progress_callback*, if provided, is called with an int in
+    [progress_start, progress_end] as each page is processed.
+
+    Returns {} silently if spaCy is not installed or no English model is found.
+    """
+    try:
+        import spacy  # noqa: PLC0415
+    except ImportError:
+        return {}
+
+    nlp = None
+    for model_name in (
+        "en_core_web_sm", "en_core_web_md",
+        "en_core_web_lg", "en_core_web_trf",
+    ):
+        try:
+            nlp = spacy.load(model_name, disable=["parser", "lemmatizer"])
+            break
+        except OSError:
+            continue
+    if nlp is None:
+        return {}
+
+    # NER labels that indicate a place/organisation, not a person
+    PLACE_LABELS = {
+        "ORG", "GPE", "FAC", "LOC", "NORP",
+        "WORK_OF_ART", "EVENT", "PRODUCT", "LAW",
+    }
+
+    # Only classify multi-word names — single words are handled by _auto_classify_name
+    name_lower_map: Dict[str, str] = {
+        n.lower(): n for n in name_vocabulary if " " in n
+    }
+    if not name_lower_map:
+        return {}
+
+    votes: Dict[str, Counter] = defaultdict(Counter)
+    total = len(page_texts)
+
+    for i, spacy_doc in enumerate(nlp.pipe(page_texts, batch_size=10)):
+        for ent in spacy_doc.ents:
+            key = ent.text.strip().lower()
+            if key in name_lower_map:
+                name = name_lower_map[key]
+                if ent.label_ in PLACE_LABELS:
+                    votes[name]["place_thing"] += 1
+                elif ent.label_ == "PERSON":
+                    votes[name]["person"] += 1
+        if progress_callback and total:
+            pct = progress_start + int((i + 1) / total * (progress_end - progress_start))
+            progress_callback(pct)
+
+    result: Dict[str, str] = {}
+    for name, counter in votes.items():
+        total = sum(counter.values())
+        if total == 0:
+            continue
+        best, count = counter.most_common(1)[0]
+        if count / total >= 0.6:
+            result[name] = best
+
+    return result
+
+
+def format_name_entry(name: str, name_type: Optional[str] = None) -> str:
+    """Format a name for index display.
+
+    name_type: 'person'      → invert two-word names ("John Smith" → "Smith, John")
+               'place_thing' → keep natural word order
+               None          → auto-classify via _auto_classify_name()
+    """
+    if name_type is None:
+        name_type = _auto_classify_name(name)
+    words = name.split()
+    if len(words) == 2 and name_type == "person":
         return f"{words[1]}, {words[0]}"
     return name
+
+
+def _suppress_covered_components(raw_results: dict) -> None:
+    """Remove pages from single-word entries that are already covered by a
+    compound entry containing that word.
+
+    Example: if "Hall, Baronial" covers p.10 then p.10 is removed from the
+    standalone "Hall" entry; if Hall has no remaining pages it is deleted.
+    This is applied in-place.
+    """
+    compound_coverage: dict[str, set] = {}  # compound key → set of page indices
+    for key, pages in raw_results.items():
+        if " " in key or "," in key:
+            compound_coverage[key] = {p[0] for p in pages}
+
+    if not compound_coverage:
+        return
+
+    for key in list(raw_results.keys()):
+        # Only process single-word entries (no space or comma)
+        if " " in key or "," in key:
+            continue
+        key_lower = key.lower()
+        covered: set = set()
+        for compound, page_indices in compound_coverage.items():
+            # Split compound display key into its component words
+            compound_words = {w.lower() for w in re.split(r'[\s,]+', compound) if w}
+            if key_lower in compound_words:
+                covered |= page_indices
+        if covered:
+            remaining = [p for p in raw_results[key] if p[0] not in covered]
+            if remaining:
+                raw_results[key] = remaining
+            else:
+                del raw_results[key]
 
 
 # ---------------------------------------------------------------------------
@@ -805,7 +953,8 @@ class NameIndexingThread(QThread):
     error_occurred = pyqtSignal(str)
 
     def __init__(self, pdf_path, page_numbering_strategy, offset=0,
-                 include_bold=False, exclude_words=None, stopwords=None):
+                 include_bold=False, exclude_words=None, stopwords=None,
+                 name_type_overrides=None):
         super().__init__()
         self.pdf_path = pdf_path
         self.strategy = page_numbering_strategy
@@ -813,6 +962,8 @@ class NameIndexingThread(QThread):
         self.include_bold = include_bold
         self.exclude_words = exclude_words or set()
         self.stopwords = stopwords or set()
+        # name_type_overrides: {natural_name_lower: "person" | "place_thing"}
+        self._overrides = {k.lower(): v for k, v in (name_type_overrides or {}).items()}
         self._is_running = True
 
     def run(self):
@@ -821,17 +972,20 @@ class NameIndexingThread(QThread):
             total_pages = len(doc)
 
             # ----------------------------------------------------------
-            # Pass 1 – Discovery  (0-40 %)
+            # Pass 1 – Discovery  (0-30 %)
             # Extract names using strict sentence-initial filtering so
             # only names confirmed by mid-sentence usage enter the vocab.
+            # Collect plain page text here so Pass 1.5 can reuse it.
             # ----------------------------------------------------------
             name_vocabulary: Set[str] = set()
+            page_texts: List[str] = []
 
             for i in range(total_pages):
                 if not self._is_running:
                     break
 
                 page = doc.load_page(i)
+                page_texts.append(page.get_text("text"))
                 tokens = extract_styled_tokens(page)
                 raw_names = extract_names_from_tokens(
                     tokens, discovery_mode=True,
@@ -842,7 +996,7 @@ class NameIndexingThread(QThread):
                 names = filter_names(raw_names)
                 name_vocabulary.update(names)
 
-                progress = int((i + 1) / total_pages * 40)
+                progress = int((i + 1) / total_pages * 30)
                 self.progress_updated.emit(progress)
 
             if not self._is_running:
@@ -864,6 +1018,18 @@ class NameIndexingThread(QThread):
                 self.indexing_finished.emit({}, {})
                 return
 
+            # ----------------------------------------------------------
+            # Pass 1.5 – spaCy NER classification  (30-55 %)
+            # Reuses the page texts collected in Pass 1.  Silently
+            # skipped (instant) if spaCy is not installed.
+            # ----------------------------------------------------------
+            spacy_types = _try_spacy_classify(
+                page_texts, name_vocabulary,
+                progress_callback=self.progress_updated.emit,
+                progress_start=30,
+                progress_end=55,
+            )
+
             # Build lookup structures for pass 2
             known_names_lower: Dict[str, str] = {}
             max_ngram_len = 1
@@ -872,7 +1038,7 @@ class NameIndexingThread(QThread):
                 max_ngram_len = max(max_ngram_len, len(name.split()))
 
             # ----------------------------------------------------------
-            # Pass 2 – Indexing  (40-75 %)
+            # Pass 2 – Indexing  (55-80 %)
             # Search every page for ALL occurrences of known names,
             # including those at the start of sentences.
             # ----------------------------------------------------------
@@ -896,7 +1062,7 @@ class NameIndexingThread(QThread):
                         seen_on_page.add(name)
                         all_occurrences[name].append((i, page_label))
 
-                progress = 40 + int((i + 1) / total_pages * 35)
+                progress = 55 + int((i + 1) / total_pages * 25)
                 self.progress_updated.emit(progress)
 
             doc.close()
@@ -913,7 +1079,10 @@ class NameIndexingThread(QThread):
 
             raw_results: Dict[str, List[Tuple[int, str]]] = {}
             for name, occurrences in all_occurrences.items():
-                display_key = format_name_entry(name)
+                # Priority: user override > spaCy NER > word-pattern heuristic
+                auto_type = spacy_types.get(name, _auto_classify_name(name))
+                name_type = self._overrides.get(name.lower(), auto_type)
+                display_key = format_name_entry(name, name_type)
                 # Deduplicate by page index
                 seen: set = set()
                 deduped: list = []
@@ -931,6 +1100,10 @@ class NameIndexingThread(QThread):
                     raw_results[display_key].sort(key=lambda x: x[0])
                 else:
                     raw_results[display_key] = deduped
+
+            # Suppress single-word entries whose pages are fully covered by
+            # compound entries that contain that word (e.g. "Hall" vs "Hall, Baronial")
+            _suppress_covered_components(raw_results)
 
             self.progress_updated.emit(85)
 

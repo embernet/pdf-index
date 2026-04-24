@@ -5,9 +5,11 @@ import string
 from view.main_window import MainWindow
 from model.indexer import IndexingThread
 from model.app_config import AppConfigManager
-from model.tag_cloud import TagCloudThread, IndexCloudThread, recolor_wordcloud
+from model.tag_cloud import TagCloudThread, IndexCloudThread, NotInIndexCloudThread, recolor_wordcloud
 from model.name_indexer import NameIndexingThread, DEFAULT_STOPWORDS
+from model.merge_suggestions import find_containment_suggestions
 from PyQt6.QtWidgets import QFileDialog, QApplication
+from PyQt6.QtCore import Qt
 
 class MainController:
     def __init__(self):
@@ -18,7 +20,9 @@ class MainController:
         self.name_indexing_thread = None
         self.tag_cloud_thread = None
         self.index_cloud_thread = None
+        self.not_in_index_cloud_thread = None
         self._cached_wordcloud = None  # Cached WordCloud for fast recolor
+        self._name_type_overrides: dict = {}  # {natural_name: "person"|"place_thing"}
 
         # Dual-thread merge state
         self._keyword_indexing_done = True
@@ -56,15 +60,27 @@ class MainController:
         self.view.exclude_editor.save_requested.connect(self.save_excludes)
         self.view.controls_output.exclude_entry_requested.connect(self.exclude_entry)
 
-        # Merge entries
+        # Proper Names Editor
+        self.view.proper_names_editor.save_requested.connect(self.save_proper_names)
+        self.view.controls_output.proper_noun_requested.connect(self.add_proper_noun)
+        self.view.controls_output.mark_as_person_requested.connect(self.mark_as_person)
+
+        # Merge entries (right-click context menu)
         self.view.controls_output.merge_entry_requested.connect(self.on_merge_entry_requested)
+
+        # Merge tool tab
+        merge_view = self.view.controls_output.merge_view
+        merge_view.merge_requested.connect(self._on_merge_tool_merge)
+        merge_view.separate_requested.connect(self._on_merge_tool_separate)
+        merge_view.revisit_requested.connect(self._on_merge_tool_revisit)
 
         # Stopwords Editor
         self.view.stopwords_editor.save_requested.connect(self.save_stopwords)
 
-        # Active Link Click / Cloud Click
+        # Active Link Click / Cloud Click / Cloud Sub-mode
         self.view.controls_output.active_link_clicked.connect(self.on_active_link_clicked)
         self.view.controls_output.cloud_word_clicked.connect(self.on_cloud_word_clicked)
+        self.view.controls_output.cloud_submode_changed.connect(self.update_output_display)
 
         # Auto-highlight indexed words on page change
         self.view.pdf_viewer.page_changed.connect(self._auto_highlight_current_page)
@@ -79,12 +95,21 @@ class MainController:
 
     def start(self):
         self.view.show()
-        
+        QApplication.instance().aboutToQuit.connect(self._cleanup_threads)
+
         # Auto-load last project
         last_proj = AppConfigManager.get_last_project()
         if last_proj and os.path.exists(last_proj):
             print(f"Auto-loading last project: {last_proj}")
             self.setup_project(last_proj)
+
+    def _cleanup_threads(self):
+        for thread in (self.indexing_thread, self.name_indexing_thread,
+                       self.tag_cloud_thread, self.index_cloud_thread,
+                       self.not_in_index_cloud_thread):
+            if thread is not None and thread.isRunning():
+                thread.terminate()
+                thread.wait()
 
     def create_project(self):
         dir_path = QFileDialog.getExistingDirectory(self.view, "Select Directory for New Project")
@@ -109,6 +134,7 @@ class MainController:
         self.load_keywords()
         self.load_excludes()
         self.load_stopwords()
+        self.load_proper_names()
 
         # Load Config
         config = ConfigManager.load_config(dir_path)
@@ -153,10 +179,8 @@ class MainController:
 
         # If loading directly into cloud view, trigger it
         mode = config.get("view_mode")
-        if mode == "tag_cloud":
-            self.generate_tag_cloud()
-        elif mode == "index_cloud":
-            self.generate_index_cloud()
+        if mode in ("tag_cloud", "index_cloud"):
+            self._generate_cloud_for_submode()
 
     def save_current_config(self):
         if not self.project_path:
@@ -222,12 +246,14 @@ class MainController:
         except Exception as e:
             print(f"Error saving keywords: {e}")
 
-        # If in cloud mode, refresh colors (green vs black)
+        # If in "all" cloud mode, refresh colors (green vs black)
         if self.view.controls_output.get_view_mode() == "tag_cloud":
-            if self._cached_wordcloud is not None:
-                self._recolor_cached_cloud()
-            else:
-                self.generate_tag_cloud()
+            submode = self.view.controls_output.get_cloud_submode()
+            if submode == "all":
+                if self._cached_wordcloud is not None:
+                    self._recolor_cached_cloud()
+                else:
+                    self.generate_tag_cloud()
 
     def load_keywords(self):
         if not self.project_path:
@@ -305,6 +331,79 @@ class MainController:
 
     def exclude_entry(self, keyword):
         self.view.exclude_editor.add_word(keyword)
+
+    def _name_types_path(self):
+        return os.path.join(self.project_path, "name_types.json") if self.project_path else None
+
+    def save_name_type_overrides(self):
+        path = self._name_types_path()
+        if not path:
+            return
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(self._name_type_overrides, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Error saving name type overrides: {e}")
+
+    def load_proper_names(self):
+        if not self.project_path:
+            return
+        path = self._name_types_path()
+        old_path = os.path.join(self.project_path, "proper_names.txt")
+
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                self._name_type_overrides = {k: v for k, v in data.items()
+                                              if v in ("person", "place_thing")}
+            except Exception as e:
+                print(f"Error loading name_types.json: {e}")
+                self._name_type_overrides = {}
+        elif os.path.exists(old_path):
+            # Migrate legacy proper_names.txt — all entries are place_thing
+            try:
+                with open(old_path, 'r', encoding='utf-8') as f:
+                    names = [ln.strip() for ln in f.read().splitlines() if ln.strip()]
+                self._name_type_overrides = {n: "place_thing" for n in names}
+                self.save_name_type_overrides()
+            except Exception as e:
+                print(f"Error migrating proper_names.txt: {e}")
+                self._name_type_overrides = {}
+        else:
+            self._name_type_overrides = {}
+
+        # Populate the editor panel with place_thing names only
+        place_names = [n for n, t in self._name_type_overrides.items() if t == "place_thing"]
+        self.view.proper_names_editor.set_text("\n".join(sorted(place_names)))
+
+    def save_proper_names(self, text):
+        """Called when the user edits the Place/Thing Names panel directly."""
+        if not self.project_path:
+            return
+        new_place_names = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        # Remove old place_thing entries, keep person entries
+        person_entries = {k: v for k, v in self._name_type_overrides.items() if v == "person"}
+        self._name_type_overrides = {**person_entries,
+                                      **{n: "place_thing" for n in new_place_names}}
+        self.save_name_type_overrides()
+
+    def add_proper_noun(self, natural_form):
+        """Mark natural_form as place_thing, save, and re-index."""
+        self._name_type_overrides[natural_form] = "place_thing"
+        self.save_name_type_overrides()
+        # Refresh panel (keep sorted, place_thing entries only)
+        place_names = [n for n, t in self._name_type_overrides.items() if t == "place_thing"]
+        self.view.proper_names_editor.set_text("\n".join(sorted(place_names)))
+        if self.current_pdf_path and self.project_path:
+            self.start_indexing()
+
+    def mark_as_person(self, natural_form):
+        """Mark natural_form as person (will be inverted), save, and re-index."""
+        self._name_type_overrides[natural_form] = "person"
+        self.save_name_type_overrides()
+        if self.current_pdf_path and self.project_path:
+            self.start_indexing()
 
     # ------------------------------------------------------------------
     # Merge entries
@@ -425,8 +524,8 @@ class MainController:
         offset = self.view.controls_output.get_offset()
 
         self.view.controls_output.create_btn.setEnabled(False)
-        self.view.progress_bar.setValue(0)
-        self.view.progress_bar.setVisible(True)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        self.view.show_progress("Creating index...")
 
         # Reset merge state
         self._pending_keyword_raw = None
@@ -460,7 +559,7 @@ class MainController:
             self.name_indexing_thread = NameIndexingThread(
                 self.current_pdf_path, strategy, offset,
                 include_bold=bold_enabled, exclude_words=exclude_words,
-                stopwords=stopwords,
+                stopwords=stopwords, name_type_overrides=self._name_type_overrides,
             )
             # Only connect progress if keyword thread is not also running
             if not has_keywords:
@@ -474,9 +573,10 @@ class MainController:
             self.name_indexing_thread.start()
 
     def on_indexing_error(self, message):
+        QApplication.restoreOverrideCursor()
         self.view.show_error(f"Indexing failed: {message}")
         self.view.controls_output.create_btn.setEnabled(True)
-        self.view.progress_bar.setVisible(False)
+        self.view.hide_progress()
 
     def _on_keyword_indexing_finished(self, formatted_results, raw_results):
         self._pending_keyword_raw = raw_results
@@ -511,6 +611,12 @@ class MainController:
                 else:
                     merged_raw[key] = list(pages)
 
+        # Suppress single-word entries whose pages are fully covered by a
+        # compound entry containing that word (e.g. keyword "Hall" vs name "Hall, Baronial")
+        from model.name_indexer import _suppress_covered_components
+        _suppress_covered_components(merged_raw)
+
+        QApplication.restoreOverrideCursor()
         self.view.controls_output.create_btn.setEnabled(True)
         self.last_raw_results = merged_raw
         # Apply any saved user merges (e.g. "Paul" → "Smith, Paul")
@@ -568,11 +674,11 @@ class MainController:
 
         mode = ctrl.get_view_mode()
 
-        if mode == "tag_cloud":
-            self.generate_tag_cloud()
+        if mode == "merge":
+            self._update_merge_view()
             return
-        if mode == "index_cloud":
-            self.generate_index_cloud()
+        if mode == "tag_cloud":
+            self._generate_cloud_for_submode()
             return
 
         if not self.last_formatted_results:
@@ -601,6 +707,9 @@ class MainController:
              self.view.controls_output.set_output("<h3>No PDF loaded.</h3>", "tag_cloud")
              return
 
+        if self.tag_cloud_thread is not None and self.tag_cloud_thread.isRunning():
+            return
+
         keywords = self.view.keyword_editor.get_keywords()
         exclude_words = {w.lower() for w in self.view.exclude_editor.get_words()}
         stopwords = {w.lower() for w in self.view.stopwords_editor.get_words()}
@@ -626,7 +735,10 @@ class MainController:
 
     def generate_index_cloud(self):
         if not self.last_raw_results:
-            self.view.controls_output.set_output("", "index_cloud")
+            self.view.controls_output.set_output("", "tag_cloud")
+            return
+
+        if self.index_cloud_thread is not None and self.index_cloud_thread.isRunning():
             return
 
         self.view.progress_bar.setVisible(True)
@@ -639,8 +751,45 @@ class MainController:
 
     def on_index_cloud_generated(self, image, layout):
         self.view.progress_bar.setVisible(False)
-        self.view.controls_output.set_output("", "index_cloud")
+        self.view.controls_output.set_output("", "tag_cloud")
         self.view.controls_output.set_cloud_data(image, layout)
+
+    def generate_not_in_index_cloud(self):
+        if not self.current_pdf_path:
+            self.view.controls_output.set_output("", "tag_cloud")
+            return
+
+        if self.not_in_index_cloud_thread is not None and self.not_in_index_cloud_thread.isRunning():
+            return
+
+        indexed_terms = list(self.last_raw_results.keys()) if self.last_raw_results else []
+        exclude_words = {w.lower() for w in self.view.exclude_editor.get_words()}
+        stopwords = {w.lower() for w in self.view.stopwords_editor.get_words()}
+        custom_stopwords = exclude_words | stopwords
+
+        self.view.progress_bar.setVisible(True)
+        self.view.progress_bar.setValue(0)
+
+        self.not_in_index_cloud_thread = NotInIndexCloudThread(
+            self.current_pdf_path, indexed_terms, custom_stopwords
+        )
+        self.not_in_index_cloud_thread.finished.connect(self.on_not_in_index_cloud_generated)
+        self.not_in_index_cloud_thread.error.connect(self.on_cloud_error)
+        self.not_in_index_cloud_thread.start()
+
+    def on_not_in_index_cloud_generated(self, image, layout):
+        self.view.progress_bar.setVisible(False)
+        self.view.controls_output.set_output("", "tag_cloud")
+        self.view.controls_output.set_cloud_data(image, layout)
+
+    def _generate_cloud_for_submode(self):
+        submode = self.view.controls_output.get_cloud_submode()
+        if submode == "in_index":
+            self.generate_index_cloud()
+        elif submode == "not_in_index":
+            self.generate_not_in_index_cloud()
+        else:
+            self.generate_tag_cloud()
 
     def _recolor_cached_cloud(self):
         """Recolor the cached WordCloud without regenerating layout."""
@@ -652,28 +801,34 @@ class MainController:
         self.view.controls_output.set_cloud_data(q_img, layout_data)
 
     def on_cloud_word_clicked(self, word):
-        # Toggle: Add or Remove
-        # Case insensitive check
         word_clean = word.rstrip(string.punctuation)
+        submode = self.view.controls_output.get_cloud_submode()
+
+        if submode == "in_index":
+            self.view.exclude_editor.add_word(word_clean)
+            return
+
+        if submode == "not_in_index":
+            current_keywords = self.view.keyword_editor.get_keywords()
+            current_lower = {k.lower(): k for k in current_keywords}
+            if word_clean.lower() not in current_lower:
+                current_keywords.append(word_clean)
+                self.view.keyword_editor.set_keywords("\n".join(current_keywords))
+                self.view.keyword_editor.emit_save()
+            return
+
+        # "all" sub-mode: toggle add/remove from include list
         current_keywords = self.view.keyword_editor.get_keywords()
         current_lower = {k.lower(): k for k in current_keywords}
-        
+
         if word_clean.lower() in current_lower:
-            # Remove
-            print(f"Removing keyword: {word_clean}")
-            # Which exact string to remove? match case insensitive
             to_remove = current_lower[word_clean.lower()]
             current_keywords = [k for k in current_keywords if k != to_remove]
         else:
-            # Add
-            print(f"Adding keyword: {word_clean}")
             current_keywords.append(word_clean)
-            
-        text = "\n".join(current_keywords)
-        self.view.keyword_editor.set_keywords(text)
-        self.view.keyword_editor.emit_save() # Triggers save then update_output_display if connected?
-        # Helper: emit_save connects to save_keywords
-        # save_keywords saves to file AND regenerates cloud if mode is cloud.
+
+        self.view.keyword_editor.set_keywords("\n".join(current_keywords))
+        self.view.keyword_editor.emit_save()
 
     def on_active_link_clicked(self, link_str):
         try:
@@ -716,6 +871,174 @@ class MainController:
     def _on_index_term_clicked(self, term):
         """Scroll the output index to the clicked term and highlight it."""
         self.view.controls_output.scroll_to_term(term)
+
+    # ------------------------------------------------------------------
+    # Merge tool tab
+    # ------------------------------------------------------------------
+
+    def _merge_tool_path(self):
+        if not self.project_path:
+            return None
+        return os.path.join(self.project_path, "merge_tool.json")
+
+    def _load_merge_tool(self) -> dict:
+        path = self._merge_tool_path()
+        if path and os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_merge_tool(self, data: dict):
+        path = self._merge_tool_path()
+        if path:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+
+    def _update_merge_view(self):
+        """Generate containment suggestions and render the merge tool cards."""
+        ctrl = self.view.controls_output
+
+        if not self.last_raw_results:
+            ctrl.set_output("", "merge")
+            ctrl.merge_view.set_suggestions([], [])
+            return
+
+        suggestions = find_containment_suggestions(self.last_raw_results)
+        decisions = self._load_merge_tool()
+
+        pending = []
+        decided = []
+
+        for s in suggestions:
+            key = s["source"]
+            if key in decisions:
+                decided.append((s, decisions[key]["decision"]))
+            else:
+                pending.append(s)
+
+        # Also show decisions for entries that were merged away (no longer
+        # in raw_results) so the user can revisit them.
+        for key, info in decisions.items():
+            if info["decision"] == "merged" and key not in self.last_raw_results:
+                # Build a minimal suggestion dict for display
+                decided.append((
+                    {
+                        "source": key,
+                        "source_pages": len(info.get("original_pages", [])),
+                        "containers": [{"entry": info["target"],
+                                        "pages": len(self.last_raw_results.get(
+                                            info["target"], []))}],
+                        "target": info["target"],
+                        "target_pages": len(self.last_raw_results.get(
+                            info["target"], [])),
+                    },
+                    "merged",
+                ))
+
+        ctrl.set_output("", "merge")
+        ctrl.merge_view.set_suggestions(pending, decided)
+
+        # Update entry count label with merge stats
+        ctrl.entry_count_label.setText(
+            f"{len(pending)} pending, {len(decided)} decided"
+        )
+
+    def _on_merge_tool_merge(self, source, target):
+        """Handle Merge button click from merge tool."""
+        if not self.last_raw_results:
+            return
+        if source not in self.last_raw_results:
+            return
+        if target not in self.last_raw_results:
+            return
+
+        # Save original pages for undo
+        original_pages = list(self.last_raw_results[source])
+
+        # Perform the merge on live results, tracking which pages are new
+        existing_indices = {p[0] for p in self.last_raw_results[target]}
+        added_pages = []
+        for p in self.last_raw_results[source]:
+            if p[0] not in existing_indices:
+                self.last_raw_results[target].append(p)
+                existing_indices.add(p[0])
+                added_pages.append(p)
+        self.last_raw_results[target].sort(key=lambda x: x[0])
+        del self.last_raw_results[source]
+
+        # Persist actual merge mapping (same as right-click merge)
+        mappings = self._load_merge_mappings()
+        mappings[source] = target
+        self._save_merge_mappings(mappings)
+
+        # Record decision in merge tool config
+        decisions = self._load_merge_tool()
+        decisions[source] = {
+            "decision": "merged",
+            "target": target,
+            "original_pages": original_pages,
+            "added_pages": added_pages,
+        }
+        self._save_merge_tool(decisions)
+
+        # Refresh
+        self.process_and_display_results()
+        self._auto_highlight_current_page()
+        # If still on the merge tab, refresh the merge view
+        if self.view.controls_output.get_view_mode() == "merge":
+            self._update_merge_view()
+
+    def _on_merge_tool_separate(self, source):
+        """Handle Keep Separate button click from merge tool."""
+        decisions = self._load_merge_tool()
+        decisions[source] = {"decision": "separate"}
+        self._save_merge_tool(decisions)
+
+        # Refresh the merge view
+        if self.view.controls_output.get_view_mode() == "merge":
+            self._update_merge_view()
+
+    def _on_merge_tool_revisit(self, source):
+        """Handle Revisit button click from merge tool."""
+        decisions = self._load_merge_tool()
+        info = decisions.pop(source, None)
+        self._save_merge_tool(decisions)
+
+        if info and info.get("decision") == "merged":
+            # Undo the merge: restore original entry and remove only
+            # the pages that were added during merge from the target.
+            target = info["target"]
+            original_pages = info.get("original_pages", [])
+            # added_pages tracks only pages that were new to the target
+            added_pages = info.get("added_pages", original_pages)
+
+            if original_pages:
+                # Restore source entry
+                self.last_raw_results[source] = original_pages
+
+                # Remove only the pages that were added during merge
+                if added_pages and target in self.last_raw_results:
+                    added_indices = {p[0] for p in added_pages}
+                    self.last_raw_results[target] = [
+                        p for p in self.last_raw_results[target]
+                        if p[0] not in added_indices
+                    ]
+
+            # Remove from merges.json
+            mappings = self._load_merge_mappings()
+            mappings.pop(source, None)
+            self._save_merge_mappings(mappings)
+
+            # Refresh display
+            self.process_and_display_results()
+            self._auto_highlight_current_page()
+
+        # Refresh the merge view
+        if self.view.controls_output.get_view_mode() == "merge":
+            self._update_merge_view()
 
     def generate_markdown(self, results):
         count = len(results)

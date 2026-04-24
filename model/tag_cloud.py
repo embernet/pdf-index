@@ -153,3 +153,47 @@ class IndexCloudThread(QThread):
         except Exception as e:
             traceback.print_exc()
             self.error.emit(str(e))
+
+
+class NotInIndexCloudThread(QThread):
+    """Generate a word cloud from PDF words that are NOT in the index."""
+    finished = pyqtSignal(object, list)  # QImage, layout list
+    error = pyqtSignal(str)
+
+    def __init__(self, pdf_path, indexed_terms, custom_stopwords=None):
+        super().__init__()
+        self.pdf_path = pdf_path
+        # Split each indexed term into its component words and use as stopwords
+        extra = set()
+        for term in indexed_terms:
+            for word in re.split(r'\W+', term.lower()):
+                if word:
+                    extra.add(word)
+        self.indexed_stopwords = extra
+        self.custom_stopwords = custom_stopwords or set()
+
+    def run(self):
+        try:
+            doc = fitz.open(self.pdf_path)
+            full_text = ""
+            for page in doc:
+                full_text += page.get_text("text") + " "
+            doc.close()
+
+            wc = WordCloud(
+                width=800,
+                height=600,
+                background_color="white",
+                stopwords=STOPWORDS | EXTRA_STOPWORDS | self.custom_stopwords | self.indexed_stopwords,
+                min_font_size=10,
+                max_font_size=100,
+                prefer_horizontal=0.9,
+                color_func=lambda *args, **kwargs: "black",
+            )
+            wc.generate(full_text)
+            q_img, layout_data = generate_cloud_image(wc)
+            self.finished.emit(q_img, layout_data)
+
+        except Exception as e:
+            traceback.print_exc()
+            self.error.emit(str(e))

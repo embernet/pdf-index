@@ -1,9 +1,10 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea, QTabBar, QLineEdit
 from PyQt6.QtCore import pyqtSignal, Qt, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QAction, QTextCursor
+from view.merge_view import MergeView
 
-TAB_MODES = ["active", "markdown", "text", "html", "tag_cloud", "index_cloud"]
-TAB_LABELS = ["Active", "Markdown", "Text", "HTML", "Tag Cloud", "Index Cloud"]
+TAB_MODES = ["active", "markdown", "text", "html", "tag_cloud", "merge"]
+TAB_LABELS = ["Active", "Markdown", "Text", "HTML", "Tag Cloud", "Merge"]
 SOURCE_TABS = {"markdown", "text", "html", "active"}
 
 class CloudLabel(QLabel):
@@ -72,7 +73,10 @@ class ControlsOutput(QWidget):
     create_index_requested = pyqtSignal()
     active_link_clicked = pyqtSignal(str) # Emits page number string or cloud action
     cloud_word_clicked = pyqtSignal(str)
+    cloud_submode_changed = pyqtSignal(str)  # "all", "in_index", "not_in_index"
     exclude_entry_requested = pyqtSignal(str)
+    proper_noun_requested = pyqtSignal(str)  # natural-order name to mark as place/thing
+    mark_as_person_requested = pyqtSignal(str)  # name (natural order) to mark as person
     merge_entry_requested = pyqtSignal(str)   # source keyword to merge
 
     def __init__(self):
@@ -169,27 +173,70 @@ class ControlsOutput(QWidget):
         self.output_text.customContextMenuRequested.connect(self.show_output_context_menu)
         self.output_layout.addWidget(self.output_text)
         
+        # Cloud sub-mode bar (All / In Index / Not in Index)
+        self.cloud_submode_bar = QWidget()
+        submode_layout = QHBoxLayout()
+        submode_layout.setContentsMargins(0, 2, 0, 2)
+        self.cloud_submode_bar.setLayout(submode_layout)
+
+        self.submode_bg = QButtonGroup(self)
+        self.submode_all_btn = QRadioButton("All")
+        self.submode_in_index_btn = QRadioButton("In Index")
+        self.submode_not_in_index_btn = QRadioButton("Not in Index")
+        self.submode_all_btn.setChecked(True)
+
+        for btn in (self.submode_all_btn, self.submode_in_index_btn, self.submode_not_in_index_btn):
+            self.submode_bg.addButton(btn)
+            submode_layout.addWidget(btn)
+        submode_layout.addStretch()
+
+        self.submode_bg.buttonClicked.connect(self._on_submode_changed)
+        self.cloud_submode_bar.setVisible(False)
+        self.output_layout.addWidget(self.cloud_submode_bar)
+
+        self.cloud_hint_label = QLabel("")
+        self.cloud_hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cloud_hint_label.setStyleSheet("color: #666; font-style: italic;")
+        self.cloud_hint_label.setVisible(False)
+        self.output_layout.addWidget(self.cloud_hint_label)
+
         self.cloud_label = CloudLabel()
         self.cloud_label.setVisible(False)
         self.cloud_label.word_clicked.connect(self.cloud_word_clicked.emit)
-        
+
         # Scroll area for cloud if large
         self.cloud_scroll = QScrollArea()
         self.cloud_scroll.setWidget(self.cloud_label)
         self.cloud_scroll.setWidgetResizable(True)
         self.cloud_scroll.setVisible(False)
         self.output_layout.addWidget(self.cloud_scroll)
-        
+
+        # Merge tool view
+        self.merge_view = MergeView()
+        self.merge_view.setVisible(False)
+        self.output_layout.addWidget(self.merge_view)
+
         self.layout.addLayout(self.output_layout)
 
     def set_output(self, content, format_type='text'):
         # Hide all first
         self.output_text.setVisible(False)
         self.cloud_scroll.setVisible(False)
+        self.cloud_submode_bar.setVisible(False)
+        self.cloud_hint_label.setVisible(False)
+        self.merge_view.setVisible(False)
 
-        if format_type in ('tag_cloud', 'index_cloud'):
+        if format_type == 'merge':
+            self.merge_view.setVisible(True)
+            self.search_input.setVisible(False)
+            return
+
+        if format_type == 'tag_cloud':
             self.cloud_scroll.setVisible(True)
             self.search_input.setVisible(False)
+            self.cloud_submode_bar.setVisible(True)
+            self._update_cloud_hint()
+            self.cloud_hint_label.setVisible(True)
             return
 
         self.search_input.setVisible(True)
@@ -270,6 +317,27 @@ class ControlsOutput(QWidget):
         # Ensure sizing
         self.cloud_label.adjustSize()
 
+    def get_cloud_submode(self):
+        """Return current cloud sub-mode: 'all', 'in_index', or 'not_in_index'."""
+        if self.submode_in_index_btn.isChecked():
+            return "in_index"
+        if self.submode_not_in_index_btn.isChecked():
+            return "not_in_index"
+        return "all"
+
+    def _update_cloud_hint(self):
+        submode = self.get_cloud_submode()
+        if submode == "in_index":
+            self.cloud_hint_label.setText("Click a word to add it to the exclude list")
+        elif submode == "not_in_index":
+            self.cloud_hint_label.setText("Click a word to add it to the include list")
+        else:
+            self.cloud_hint_label.setText("Click a word to toggle it in the include list")
+
+    def _on_submode_changed(self, btn):
+        self._update_cloud_hint()
+        self.cloud_submode_changed.emit(self.get_cloud_submode())
+
     def get_strategy(self):
         return "physical" if self.radio_physical.isChecked() else "logical"
 
@@ -306,13 +374,37 @@ class ControlsOutput(QWidget):
             exclude_action.triggered.connect(
                 lambda checked, k=keyword: self.exclude_entry_requested.emit(k)
             )
+
+            actions_to_insert = [merge_action, exclude_action]
+
+            # Inverted entry ("Surname, Firstname") → offer to flip to place/thing
+            if ", " in keyword:
+                parts = keyword.split(", ", 1)
+                natural_form = f"{parts[1].strip()} {parts[0].strip()}"
+                proper_noun_action = QAction(
+                    f'Mark "{natural_form}" as place/thing name (not a person)', self
+                )
+                proper_noun_action.triggered.connect(
+                    lambda checked, n=natural_form: self.proper_noun_requested.emit(n)
+                )
+                actions_to_insert.append(proper_noun_action)
+            # 2-word natural-order entry (no comma) → offer to flip to person
+            elif " " in keyword and "," not in keyword and keyword.count(" ") == 1:
+                mark_person_action = QAction(
+                    f'Mark "{keyword}" as person name (will be inverted)', self
+                )
+                mark_person_action.triggered.connect(
+                    lambda checked, n=keyword: self.mark_as_person_requested.emit(n)
+                )
+                actions_to_insert.append(mark_person_action)
+
             if first:
-                menu.insertAction(first, merge_action)
-                menu.insertAction(first, exclude_action)
+                for action in actions_to_insert:
+                    menu.insertAction(first, action)
                 menu.insertSeparator(first)
             else:
-                menu.addAction(merge_action)
-                menu.addAction(exclude_action)
+                for action in actions_to_insert:
+                    menu.addAction(action)
 
         menu.exec(self.output_text.mapToGlobal(pos))
 
@@ -333,8 +425,10 @@ class ControlsOutput(QWidget):
         # Set Offset
         self.offset_spin.setValue(config.get("offset", 1))
         
-        # Set View Mode
+        # Set View Mode (migrate legacy "index_cloud" to "tag_cloud")
         mode = config.get("view_mode", "markdown")
+        if mode == "index_cloud":
+            mode = "tag_cloud"
         if mode in TAB_MODES:
             self.view_tabs.setCurrentIndex(TAB_MODES.index(mode))
         else:

@@ -10,7 +10,7 @@ class KeywordEditor(QWidget):
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
         
-        self.label = QLabel("Keywords (one per line):")
+        self.label = QLabel("Include list (one per line):")
         self.layout.addWidget(self.label)
         
         self.sort_btn = QPushButton("Sort Alphabetically")
