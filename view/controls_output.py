@@ -2,9 +2,10 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTex
 from PyQt6.QtCore import pyqtSignal, Qt, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QAction, QTextCursor
 from view.merge_view import MergeView
+from view.reports_view import ReportsView
 
-TAB_MODES = ["active", "markdown", "text", "html", "tag_cloud", "merge"]
-TAB_LABELS = ["Active", "Markdown", "Text", "HTML", "Tag Cloud", "Merge"]
+TAB_MODES = ["active", "markdown", "text", "html", "tag_cloud", "merge", "reports"]
+TAB_LABELS = ["Active", "Markdown", "Text", "HTML", "Tag Cloud", "Merge", "Reports"]
 SOURCE_TABS = {"markdown", "text", "html", "active"}
 
 class CloudLabel(QLabel):
@@ -78,6 +79,8 @@ class ControlsOutput(QWidget):
     proper_noun_requested = pyqtSignal(str)  # natural-order name to mark as place/thing
     mark_as_person_requested = pyqtSignal(str)  # name (natural order) to mark as person
     merge_entry_requested = pyqtSignal(str)   # source keyword to merge
+    run_reports_requested = pyqtSignal(int, int)
+    run_report_requested = pyqtSignal(str, int, int)
 
     def __init__(self):
         super().__init__()
@@ -228,6 +231,14 @@ class ControlsOutput(QWidget):
         self.merge_view.setVisible(False)
         self.output_layout.addWidget(self.merge_view)
 
+        # Reports view
+        self.reports_view = ReportsView()
+        self.reports_view.setVisible(False)
+        self.output_layout.addWidget(self.reports_view)
+        self.reports_view.navigate_requested.connect(self.active_link_clicked.emit)
+        self.reports_view.run_reports_requested.connect(self.run_reports_requested.emit)
+        self.reports_view.run_report_requested.connect(self.run_report_requested.emit)
+
         self.layout.addLayout(self.output_layout)
 
     def set_output(self, content, format_type='text'):
@@ -237,6 +248,12 @@ class ControlsOutput(QWidget):
         self.cloud_submode_bar.setVisible(False)
         self.cloud_hint_label.setVisible(False)
         self.merge_view.setVisible(False)
+        self.reports_view.setVisible(False)
+
+        if format_type == 'reports':
+            self.reports_view.setVisible(True)
+            self.search_input.setVisible(False)
+            return
 
         if format_type == 'merge':
             self.merge_view.setVisible(True)

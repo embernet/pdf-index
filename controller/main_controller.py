@@ -8,6 +8,7 @@ from model.app_config import AppConfigManager
 from model.tag_cloud import TagCloudThread, IndexCloudThread, NotInIndexCloudThread, recolor_wordcloud
 from model.name_indexer import NameIndexingThread, DEFAULT_STOPWORDS
 from model.merge_suggestions import find_containment_suggestions
+from model.reports import run_reports
 from PyQt6.QtWidgets import QFileDialog, QApplication
 from PyQt6.QtCore import Qt
 
@@ -77,6 +78,10 @@ class MainController:
         merge_view.separate_requested.connect(self._on_merge_tool_separate)
         merge_view.revisit_requested.connect(self._on_merge_tool_revisit)
 
+        # Reports tab
+        self.view.controls_output.run_reports_requested.connect(self._run_all_reports)
+        self.view.controls_output.run_report_requested.connect(self._run_single_report)
+
         # Stopwords Editor
         self.view.stopwords_editor.save_requested.connect(self.save_stopwords)
 
@@ -95,6 +100,7 @@ class MainController:
         # Store last results to allow cheap format switching
         self.last_raw_results = None
         self.last_formatted_results = None
+        self._last_report_sections = None
 
     def start(self):
         self.view.show()
@@ -635,6 +641,7 @@ class MainController:
         self.view.hide_progress()
         self.view.controls_output.create_btn.setEnabled(True)
         self.last_raw_results = merged_raw
+        self._last_report_sections = None
         # Apply any saved user merges (e.g. "Paul" → "Smith, Paul")
         self._apply_merge_mappings()
         self.process_and_display_results()
@@ -690,6 +697,9 @@ class MainController:
 
         mode = ctrl.get_view_mode()
 
+        if mode == "reports":
+            self._update_reports_view()
+            return
         if mode == "merge":
             self._update_merge_view()
             return
@@ -1055,6 +1065,73 @@ class MainController:
         # Refresh the merge view
         if self.view.controls_output.get_view_mode() == "merge":
             self._update_merge_view()
+
+    # ------------------------------------------------------------------
+    # Reports tab
+    # ------------------------------------------------------------------
+
+    def _update_reports_view(self):
+        ctrl = self.view.controls_output
+        if not self.last_raw_results:
+            ctrl.reports_view.set_not_run()
+            ctrl.set_output("", "reports")
+            return
+        # Show cached results if available, else run fresh
+        if not hasattr(self, '_last_report_sections') or self._last_report_sections is None:
+            self._run_all_reports(
+                ctrl.reports_view.thin_spin.value(),
+                ctrl.reports_view.dense_spin.value(),
+            )
+        else:
+            ctrl.set_output("", "reports")
+
+    def _run_all_reports(self, thin_threshold, dense_threshold):
+        ctrl = self.view.controls_output
+        if not self.last_raw_results:
+            ctrl.reports_view.set_not_run()
+            ctrl.set_output("", "reports")
+            return
+        include_keywords = self.view.keyword_editor.get_keywords()
+        self._last_report_sections = run_reports(
+            self.last_raw_results,
+            include_keywords,
+            thin_threshold=thin_threshold,
+            dense_threshold=dense_threshold,
+        )
+        ctrl.reports_view.set_reports(self._last_report_sections)
+        ctrl.set_output("", "reports")
+        # Switch to reports tab if not already there
+        if ctrl.get_view_mode() != "reports":
+            from view.controls_output import TAB_MODES
+            ctrl.view_tabs.setCurrentIndex(TAB_MODES.index("reports"))
+
+    def _run_single_report(self, report_id, thin_threshold, dense_threshold):
+        ctrl = self.view.controls_output
+        if not self.last_raw_results:
+            return
+        include_keywords = self.view.keyword_editor.get_keywords()
+        # Run just the one report
+        new_sections = run_reports(
+            self.last_raw_results,
+            include_keywords,
+            thin_threshold=thin_threshold,
+            dense_threshold=dense_threshold,
+            report_ids=[report_id],
+        )
+        # Merge into cached sections: replace matching report_id, keep others
+        if not hasattr(self, '_last_report_sections') or self._last_report_sections is None:
+            self._last_report_sections = new_sections
+        else:
+            new_by_id = {s.report_id: s for s in new_sections if not s.not_run}
+            merged = []
+            for s in self._last_report_sections:
+                if s.report_id in new_by_id:
+                    merged.append(new_by_id[s.report_id])
+                else:
+                    merged.append(s)
+            self._last_report_sections = merged
+        ctrl.reports_view.set_reports(self._last_report_sections)
+        ctrl.set_output("", "reports")
 
     def generate_markdown(self, results):
         count = len(results)
