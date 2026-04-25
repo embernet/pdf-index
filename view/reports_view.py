@@ -184,7 +184,7 @@ class ReportsView(QWidget):
             page_links = []
             for ref in refs[:MAX_LINKS]:
                 label_text = format_page_ref(ref.page_idx, ref.page_label)
-                href = f'#{ref.page_idx}|{esc(term)}'
+                href = f'#{ref.page_idx}|{term}'
                 page_links.append(f'<a href="{href}">{label_text}</a>')
 
             pages_html = ', '.join(page_links)
