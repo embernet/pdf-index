@@ -112,6 +112,17 @@ def find_similar_terms(raw_results: Dict[str, List[Tuple[int, str]]]) -> ReportS
         return ReportSection(report_id=report_id, title=title, description=description,
                              findings=findings, run_time_ms=0.0)
 
+    entries = raw_results
+    if len(entries) > 600:
+        return ReportSection(
+            report_id="similar_terms",
+            title="Similar Terms",
+            description="Index too large for edit-distance analysis (> 600 entries). "
+                        "Export to text for large-scale duplicate detection.",
+            findings=[],
+            not_run=True,
+        )
+
     terms = list(raw_results.keys())
     n = len(terms)
     lower = [t.casefold() for t in terms]
@@ -425,9 +436,14 @@ def find_shared_page_sets(raw_results: Dict[str, List[Tuple[int, str]]]) -> Repo
 
     if len(raw_results) > 2000:
         run_time_ms = (time.monotonic() - t0) * 1000
-        return ReportSection(report_id=report_id, title=title, description=description,
-                             findings=findings, run_time_ms=run_time_ms,
-                             not_run=True)  # skipped due to size guard
+        return ReportSection(
+            report_id=report_id,
+            title=title,
+            description="Index too large for pairwise page-set comparison (> 2000 entries).",
+            findings=findings,
+            run_time_ms=run_time_ms,
+            not_run=True,
+        )
 
     terms = list(raw_results.keys())
     n = len(terms)

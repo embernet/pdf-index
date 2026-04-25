@@ -510,6 +510,7 @@ class MainController:
         self._save_merge_mappings(mappings)
 
         # Refresh display
+        self._last_report_sections = None
         self.process_and_display_results()
         self._auto_highlight_current_page()
 
@@ -1015,6 +1016,7 @@ class MainController:
         self._save_merge_tool(decisions)
 
         # Refresh
+        self._last_report_sections = None
         self.process_and_display_results()
         self._auto_highlight_current_page()
         # If still on the merge tab, refresh the merge view
