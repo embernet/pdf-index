@@ -83,6 +83,40 @@ Index files are automatically saved in the project folder when generated.
 
 ---
 
+## Reports
+
+The Reports tab generates nine different analyses of your index to help identify quality issues, consistency problems, and potential improvements. Use these reports to spot typos, discover name variants, find under- or over-indexed terms, and consolidate entries more effectively.
+
+### Using Reports
+
+- **Run All Reports** — click the button to generate all reports at once (execution time depends on index size).
+- **Individual Re-run** — each report has a ↺ button to re-run just that report without regenerating the others.
+- **Thin and Dense thresholds** — two spinboxes let you adjust the page count cutoffs: *Thin* (default 1 page) identifies low-frequency entries, and *Dense* (default 20 pages) identifies high-frequency entries.
+- **Click-to-Navigate** — click any page reference in a report to navigate the PDF to that page and highlight the term in orange.
+- **Page References** — show both the logical page label (as defined in the PDF metadata) and the physical PDF page number when they differ (e.g. "iv (PDF p.4)").
+
+### The 9 Reports
+
+**Similar Terms** — entries with an edit distance of ≤ 3 operations. Highlights potential typos or spelling variants; useful when combined with the Merge tab to consolidate near-duplicates.
+
+**Overlapping Terms** — entries where one term's words are a subset of another's (e.g. "Smith" and "Smith, John"). Complements the Merge tab; helps you decide whether to keep both entries or consolidate them.
+
+**Capitalisation Variants** — entries that differ only in capitalisation (e.g. "new york" and "New York"). Typically these should be merged or standardised to one form.
+
+**Formatting Variants** — entries with the same words but in different order, or differing only in hyphenation or spacing. Indicates inconsistent data entry or PDF extraction issues that may warrant consolidation.
+
+**Unused Include Terms** — keywords from your include list that produced no index entries. Usually indicates a typo in your keyword list, but may also mean the term genuinely doesn't appear in the PDF.
+
+**Thin Entries** — entries appearing on a small number of pages (configurable via the *Thin* threshold, default 1). Low-frequency entries may not warrant an index entry and could be removed to keep the index focused.
+
+**Dense Entries** — entries appearing on many pages (configurable via the *Dense* threshold, default 20). High-frequency entries may benefit from creating sub-entries to provide more granular indexing.
+
+**Shared Page Sets** — pairs of entries appearing on nearly identical page sets (≥ 80% overlap). Indicates the entries may refer to the same concept under different names and could be merged. *Note: this report is skipped automatically when the index has more than 2000 entries.*
+
+**Acronym / Expansion Pairs** — all-caps terms (e.g. "BBC") that may be acronyms for longer entries (e.g. "British Broadcasting Corporation"). Useful for discovering whether acronyms and their expansions should be merged or cross-referenced.
+
+---
+
 ## PDF Viewer
 
 - **Fit-Width Rendering** — pages automatically scale to fill the viewer width. Responds to window resizing.
