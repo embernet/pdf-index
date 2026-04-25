@@ -34,6 +34,7 @@ class MainController:
         self.view.action_new_project.triggered.connect(self.create_project)
         self.view.action_open_project.triggered.connect(self.open_project)
         self.view.action_import_pdf.triggered.connect(self.import_pdf)
+        self.view.action_exit.triggered.connect(self.exit_app)
         
         # Keyword Editor
         self.view.keyword_editor.save_requested.connect(self.save_keywords)
@@ -52,9 +53,11 @@ class MainController:
         self.view.controls_output.radio_physical.toggled.connect(lambda: self.save_current_config())
         self.view.controls_output.radio_logical.toggled.connect(lambda: self.save_current_config())
         self.view.controls_output.offset_spin.valueChanged.connect(lambda: self.save_current_config())
-        self.view.pdf_viewer.fit_width_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.controls_output.index_from_offset_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.pdf_viewer.fit_page_chk.toggled.connect(lambda: self.save_current_config())
         self.view.controls_output.name_indexing_chk.toggled.connect(lambda: self.save_current_config())
         self.view.controls_output.bold_indexing_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.controls_output.surname_first_chk.toggled.connect(lambda: self.save_current_config())
 
         # Exclude Editor
         self.view.exclude_editor.save_requested.connect(self.save_excludes)
@@ -141,7 +144,7 @@ class MainController:
         
         # Set UI State
         self.view.controls_output.set_state(config)
-        self.view.pdf_viewer.set_fit_width(config.get("fit_width", True))
+        self.view.pdf_viewer.set_fit_page(config.get("fit_page", config.get("fit_width", True)))
         self.view.pdf_viewer.highlight_indexed_chk.setChecked(config.get("highlight_indexed", True))
         
         # Load PDF
@@ -151,12 +154,15 @@ class MainController:
             if os.path.exists(pdf_path):
                 self.current_pdf_path = pdf_path
                 self.view.pdf_viewer.load_document(pdf_path)
+                self.view.set_pdf_name(pdf_name)
             else:
                 self.current_pdf_path = None
                 self.view.pdf_viewer.close_document()
+                self.view.set_pdf_name(None)
         else:
             self.current_pdf_path = None
             self.view.pdf_viewer.close_document()
+            self.view.set_pdf_name(None)
             
         # Ensure config is freshly saved
         self.save_current_config()
@@ -201,10 +207,12 @@ class MainController:
             "view_mode": mode,
             "capitalize": ctrl.capitalize_chk.isChecked(),
             "view_source": ctrl.view_source_chk.isChecked(),
-            "fit_width": viewer.fit_width_chk.isChecked(),
+            "fit_page": viewer.fit_page_chk.isChecked(),
             "name_indexing": ctrl.name_indexing_chk.isChecked(),
             "bold_indexing": ctrl.bold_indexing_chk.isChecked(),
-            "highlight_indexed": viewer.highlight_indexed_chk.isChecked()
+            "highlight_indexed": viewer.highlight_indexed_chk.isChecked(),
+            "index_from_offset": ctrl.index_from_offset_chk.isChecked(),
+            "surname_first": ctrl.surname_first_chk.isChecked(),
         }
         
         from model.config import ConfigManager
@@ -231,6 +239,7 @@ class MainController:
             self.current_pdf_path = file_path
             self._cached_wordcloud = None  # Invalidate on PDF change
             self.view.pdf_viewer.load_document(self.current_pdf_path)
+            self.view.set_pdf_name(os.path.basename(self.current_pdf_path))
 
             # Save config immediately to persist PDF reference
             self.save_current_config()
@@ -522,6 +531,11 @@ class MainController:
 
         strategy = self.view.controls_output.get_strategy()
         offset = self.view.controls_output.get_offset()
+        index_from_offset = (
+            self.view.controls_output.index_from_offset_chk.isChecked()
+            and self.view.controls_output.index_from_offset_chk.isEnabled()
+        )
+        start_page = abs(offset) if (index_from_offset and offset < 0) else 0
 
         self.view.controls_output.create_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -536,7 +550,8 @@ class MainController:
         # Start keyword indexing (if keywords exist)
         if has_keywords:
             self.indexing_thread = IndexingThread(
-                self.current_pdf_path, keywords, strategy, offset
+                self.current_pdf_path, keywords, strategy, offset,
+                start_page=start_page,
             )
             self.indexing_thread.progress_updated.connect(
                 self.view.set_progress
@@ -556,16 +571,16 @@ class MainController:
             # was created from an older version.
             stopwords = DEFAULT_STOPWORDS | {w.lower() for w in self.view.stopwords_editor.get_words()}
 
+            surname_first = self.view.controls_output.surname_first_chk.isChecked()
             self.name_indexing_thread = NameIndexingThread(
                 self.current_pdf_path, strategy, offset,
                 include_bold=bold_enabled, exclude_words=exclude_words,
                 stopwords=stopwords, name_type_overrides=self._name_type_overrides,
+                start_page=start_page, surname_first=surname_first,
             )
-            # Only connect progress if keyword thread is not also running
-            if not has_keywords:
-                self.name_indexing_thread.progress_updated.connect(
-                    self.view.set_progress
-                )
+            self.name_indexing_thread.progress_updated.connect(
+                self.view.set_progress
+            )
             self.name_indexing_thread.indexing_finished.connect(
                 self._on_name_indexing_finished
             )
@@ -617,6 +632,7 @@ class MainController:
         _suppress_covered_components(merged_raw)
 
         QApplication.restoreOverrideCursor()
+        self.view.hide_progress()
         self.view.controls_output.create_btn.setEnabled(True)
         self.last_raw_results = merged_raw
         # Apply any saved user merges (e.g. "Paul" → "Smith, Paul")
@@ -1110,6 +1126,9 @@ class MainController:
                     link_strings.append(f"{s_link}-{e_link}")
             
             lines.append(f"<div><b>{display_kw}</b>: {', '.join(link_strings)}</div>")
-            
+
         lines.append("</body></html>")
         return "\n".join(lines)
+
+    def exit_app(self):
+        QApplication.quit()

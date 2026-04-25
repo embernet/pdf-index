@@ -2,8 +2,8 @@ import os
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QSplitter, QFileDialog, QMenuBar,
-    QMenu, QLabel, QVBoxLayout, QSizePolicy, QPushButton, QTextBrowser,
-    QProgressBar
+    QLabel, QVBoxLayout, QSizePolicy, QPushButton, QTextBrowser,
+    QProgressBar, QFrame
 )
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
@@ -37,6 +37,11 @@ class MainWindow(QMainWindow):
         self.version_label = QLabel(f"pdf-indexer  v{__version__}")
         self.version_label.setStyleSheet("font-weight: bold; color: #555;")
         header_layout.addWidget(self.version_label)
+
+        self.pdf_name_label = QLabel("")
+        self.pdf_name_label.setStyleSheet("color: #555;")
+        header_layout.addWidget(self.pdf_name_label)
+
         header_layout.addStretch()
 
         self.progress_label = QLabel("Creating index...")
@@ -48,12 +53,6 @@ class MainWindow(QMainWindow):
         self.progress_bar.setFixedWidth(200)
         self.progress_bar.setFixedHeight(16)
         header_layout.addWidget(self.progress_bar)
-
-        self.help_btn = QPushButton("? Help")
-        self.help_btn.setCheckable(True)
-        self.help_btn.setFixedWidth(70)
-        self.help_btn.clicked.connect(self._toggle_help)
-        header_layout.addWidget(self.help_btn)
 
         header_widget = QWidget()
         header_widget.setLayout(header_layout)
@@ -102,22 +101,54 @@ class MainWindow(QMainWindow):
         self.left_pane.setMinimumWidth(120)
         self.controls_output.setMinimumWidth(150)
 
-        # Help panel (hidden by default)
-        self.help_panel = QTextBrowser()
-        self.help_panel.setOpenExternalLinks(True)
-        self.help_panel.setVisible(False)
+        # Help panel (hidden by default) — QWidget wrapper with close button
+        self.help_widget = QWidget()
+        self.help_widget.setVisible(False)
+        help_widget_layout = QVBoxLayout()
+        help_widget_layout.setContentsMargins(0, 0, 0, 0)
+        help_widget_layout.setSpacing(0)
+        self.help_widget.setLayout(help_widget_layout)
+
+        # Title bar
+        help_title_bar = QWidget()
+        help_title_bar.setStyleSheet("background: #e8e8e8;")
+        title_bar_layout = QHBoxLayout()
+        title_bar_layout.setContentsMargins(6, 3, 6, 3)
+        help_title_bar.setLayout(title_bar_layout)
+        help_title_label = QLabel("Help")
+        help_title_label.setStyleSheet("font-weight: bold;")
+        help_close_btn = QPushButton("✕")
+        help_close_btn.setFlat(True)
+        help_close_btn.setFixedSize(20, 20)
+        help_close_btn.setStyleSheet("font-size: 11px;")
+        help_close_btn.clicked.connect(self._close_help)
+        title_bar_layout.addWidget(help_title_label)
+        title_bar_layout.addStretch()
+        title_bar_layout.addWidget(help_close_btn)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+
+        self.help_browser = QTextBrowser()
+        self.help_browser.setOpenExternalLinks(True)
+
+        help_widget_layout.addWidget(help_title_bar)
+        help_widget_layout.addWidget(sep)
+        help_widget_layout.addWidget(self.help_browser)
+
         self._load_help_content()
 
         self.splitter.addWidget(self.left_pane)
         self.splitter.addWidget(self.pdf_viewer)
         self.splitter.addWidget(self.controls_output)
-        self.splitter.addWidget(self.help_panel)
+        self.splitter.addWidget(self.help_widget)
 
         # Set stretch factors (approx 20%, 50%, 30%)
         self.splitter.setStretchFactor(0, 2)
         self.splitter.setStretchFactor(1, 5)
         self.splitter.setStretchFactor(2, 3)
-        self.splitter.setStretchFactor(3, 3)
+        self.splitter.setStretchFactor(3, 6)
 
         # Menu Bar
         self.menu_bar = self.menuBar()
@@ -130,6 +161,16 @@ class MainWindow(QMainWindow):
         self.file_menu.addAction(self.action_new_project)
         self.file_menu.addAction(self.action_open_project)
         self.file_menu.addAction(self.action_import_pdf)
+        self.file_menu.addSeparator()
+        self.action_exit = QAction("Exit", self)
+        self.file_menu.addAction(self.action_exit)
+
+        # Use a zero-width space in the menu title so macOS does not identify
+        # it as the system Help menu (which would inject its own search bar).
+        self.help_menu = self.menu_bar.addMenu("Help​")
+        self.action_help_contents = QAction("Show/Hide Help", self)
+        self.action_help_contents.triggered.connect(self._toggle_help)
+        self.help_menu.addAction(self.action_help_contents)
 
     # ------------------------------------------------------------------
     # Help panel
@@ -142,12 +183,18 @@ class MainWindow(QMainWindow):
         )
         try:
             with open(help_path, "r", encoding="utf-8") as f:
-                self.help_panel.setMarkdown(f.read())
+                self.help_browser.setMarkdown(f.read())
         except FileNotFoundError:
-            self.help_panel.setPlainText("HELP.md not found.")
+            self.help_browser.setPlainText("HELP.md not found.")
 
-    def _toggle_help(self, checked):
-        self.help_panel.setVisible(checked)
+    def set_pdf_name(self, filename: str | None):
+        self.pdf_name_label.setText(f"—  {filename}" if filename else "")
+
+    def _toggle_help(self):
+        self.help_widget.setVisible(not self.help_widget.isVisible())
+
+    def _close_help(self):
+        self.help_widget.setVisible(False)
 
     # ------------------------------------------------------------------
     # Collapsible panel management (max 2 open at once)
@@ -185,8 +232,6 @@ class MainWindow(QMainWindow):
 
     def set_progress(self, value):
         self.progress_bar.setValue(value)
-        if value >= 100:
-            self.hide_progress()
 
     def show_error(self, message):
         from PyQt6.QtWidgets import QMessageBox

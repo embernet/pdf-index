@@ -286,10 +286,13 @@ def extract_styled_tokens(page) -> List[StyledToken]:
     prev_block = None
 
     for block in text_blocks:
-        # Between blocks, decide whether to insert a synthetic sentence-end.
-        # If the previous block's last line fills the column width, the text
-        # is wrapping (not ending a paragraph) and we should NOT break any
-        # name n-gram that spans the boundary.
+        # Between blocks: insert a synthetic sentence-end whenever the previous
+        # block's last line does NOT fill the column width.  A full-width last
+        # line means the paragraph was still wrapping into the next block, so
+        # a name n-gram may legitimately span the boundary (e.g. "Dublin
+        # International" / "Piano Competition" in a reflowed PDF).  A short
+        # last line means the block is a heading, list entry, or paragraph end
+        # — it cannot be mid-sentence, so we always break the n-gram.
         if tokens and prev_block is not None:
             insert_sep = True
             if col_width > 0:
@@ -299,17 +302,7 @@ def extract_styled_tokens(page) -> List[StyledToken]:
                     if last_bbox:
                         line_w = last_bbox[2] - last_bbox[0]
                         if line_w >= col_width * 0.9:
-                            insert_sep = False
-
-            # Only insert a synthetic sentence-end when the previous
-            # block's text actually ends with sentence-ending punctuation.
-            # Many PDFs split a single sentence or phrase across blocks
-            # (e.g. "Dublin International" / "Piano Competition"); blindly
-            # inserting "." would break legitimate multi-word names.
-            if insert_sep:
-                last_ch = _last_text_char(prev_block)
-                if last_ch and last_ch not in SENTENCE_END_CHARS:
-                    insert_sep = False
+                            insert_sep = False  # wrapped paragraph text
 
             if insert_sep:
                 tokens.append(StyledToken(
@@ -317,7 +310,8 @@ def extract_styled_tokens(page) -> List[StyledToken]:
                     is_superscript=False,
                 ))
 
-        for line in block.get("lines", []):
+        block_lines = block.get("lines", [])
+        for line_idx, line in enumerate(block_lines):
             for span in line.get("spans", []):
                 flags = span.get("flags", 0)
                 is_bold = bool(flags & 16)
@@ -333,6 +327,22 @@ def extract_styled_tokens(page) -> List[StyledToken]:
                         is_italic=is_italic,
                         is_superscript=is_superscript,
                     ))
+
+            # Within a block, insert a separator after any non-final line that
+            # does not fill the column.  Wrapped paragraph lines fill the column
+            # on every line but the last, so only short lines (headings, list
+            # entries, paragraph-final lines) trigger a break.  This prevents
+            # names from spanning across a newline boundary within one block.
+            is_last_line = (line_idx == len(block_lines) - 1)
+            if not is_last_line and tokens and col_width > 0:
+                line_bbox = line.get("bbox")
+                if line_bbox:
+                    line_w = line_bbox[2] - line_bbox[0]
+                    if line_w < col_width * 0.9:
+                        tokens.append(StyledToken(
+                            text=".", is_bold=False, is_italic=False,
+                            is_superscript=False,
+                        ))
 
         prev_block = block
 
@@ -416,6 +426,7 @@ def extract_names_from_tokens(
 
     names: List[str] = []
     current_ngram: List[str] = []
+    current_ngram_italic: Optional[bool] = None  # italic status of the first token in the n-gram
     after_sentence_end = True  # Start of page is effectively a sentence boundary
 
     for token in tokens:
@@ -431,6 +442,7 @@ def extract_names_from_tokens(
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
+                current_ngram_italic = None
             continue
 
         # Punctuation handling
@@ -438,6 +450,7 @@ def extract_names_from_tokens(
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
+                current_ngram_italic = None
             if word in SENTENCE_END_CHARS:
                 after_sentence_end = True
             continue
@@ -464,6 +477,7 @@ def extract_names_from_tokens(
                 if current_ngram:
                     names.append(" ".join(current_ngram))
                     current_ngram = []
+                    current_ngram_italic = None
             after_sentence_end = False
             continue
 
@@ -472,6 +486,7 @@ def extract_names_from_tokens(
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
+                current_ngram_italic = None
             after_sentence_end = False
             continue
 
@@ -483,6 +498,7 @@ def extract_names_from_tokens(
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
+                current_ngram_italic = None
             continue
 
         # Filter: number-like tokens.
@@ -494,6 +510,7 @@ def extract_names_from_tokens(
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
+                current_ngram_italic = None
             continue
 
         # Title prefixes: skip the word but keep building the n-gram
@@ -506,13 +523,14 @@ def extract_names_from_tokens(
         # it is kept — this preserves titles like "The Sound of Music" or
         # "War and Peace" which are typically set in italics.
         if word_lower in CONNECTOR_WORDS:
-            if current_ngram and token.is_italic:
+            if current_ngram and token.is_italic and current_ngram_italic:
                 current_ngram.append(word)
                 after_sentence_end = False
                 continue
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
+                current_ngram_italic = None
             after_sentence_end = False
             continue
 
@@ -531,6 +549,7 @@ def extract_names_from_tokens(
                     if current_ngram:
                         names.append(" ".join(current_ngram))
                         current_ngram = []
+                        current_ngram_italic = None
                     continue
             is_name_word = True
 
@@ -545,18 +564,28 @@ def extract_names_from_tokens(
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
+                current_ngram_italic = None
             continue
 
         if is_name_word:
             # Stopwords may extend an existing n-gram but never start one.
             if word_lower in stopwords and not current_ngram:
                 continue
+            # Style break: flush the n-gram when italic status changes mid-sequence
+            # (e.g. "Adam Gorb's" in plain text followed by italic "Absinthe").
+            if current_ngram and token.is_italic != current_ngram_italic:
+                names.append(" ".join(current_ngram))
+                current_ngram = []
+                current_ngram_italic = None
+            if not current_ngram:
+                current_ngram_italic = token.is_italic
             current_ngram.append(word)
         else:
             # Lowercase non-styled, non-connector word: breaks n-gram
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
+                current_ngram_italic = None
 
     # Flush any remaining n-gram
     if current_ngram:
@@ -954,7 +983,7 @@ class NameIndexingThread(QThread):
 
     def __init__(self, pdf_path, page_numbering_strategy, offset=0,
                  include_bold=False, exclude_words=None, stopwords=None,
-                 name_type_overrides=None):
+                 name_type_overrides=None, start_page=0, surname_first=False):
         super().__init__()
         self.pdf_path = pdf_path
         self.strategy = page_numbering_strategy
@@ -962,14 +991,16 @@ class NameIndexingThread(QThread):
         self.include_bold = include_bold
         self.exclude_words = exclude_words or set()
         self.stopwords = stopwords or set()
-        # name_type_overrides: {natural_name_lower: "person" | "place_thing"}
         self._overrides = {k.lower(): v for k, v in (name_type_overrides or {}).items()}
+        self._start_page = start_page
+        self._surname_first = surname_first
         self._is_running = True
 
     def run(self):
         try:
             doc = fitz.open(self.pdf_path)
             total_pages = len(doc)
+            indexable = total_pages - self._start_page
 
             # ----------------------------------------------------------
             # Pass 1 – Discovery  (0-30 %)
@@ -980,7 +1011,7 @@ class NameIndexingThread(QThread):
             name_vocabulary: Set[str] = set()
             page_texts: List[str] = []
 
-            for i in range(total_pages):
+            for i in range(self._start_page, total_pages):
                 if not self._is_running:
                     break
 
@@ -996,7 +1027,7 @@ class NameIndexingThread(QThread):
                 names = filter_names(raw_names)
                 name_vocabulary.update(names)
 
-                progress = int((i + 1) / total_pages * 30)
+                progress = int((i - self._start_page + 1) / indexable * 30)
                 self.progress_updated.emit(progress)
 
             if not self._is_running:
@@ -1020,15 +1051,20 @@ class NameIndexingThread(QThread):
 
             # ----------------------------------------------------------
             # Pass 1.5 – spaCy NER classification  (30-55 %)
-            # Reuses the page texts collected in Pass 1.  Silently
-            # skipped (instant) if spaCy is not installed.
+            # Only needed when surname_first is on, because that is the
+            # only case where name type (person vs place/thing) affects
+            # the output.  Skip entirely otherwise to keep indexing fast.
             # ----------------------------------------------------------
-            spacy_types = _try_spacy_classify(
-                page_texts, name_vocabulary,
-                progress_callback=self.progress_updated.emit,
-                progress_start=30,
-                progress_end=55,
-            )
+            if self._surname_first:
+                spacy_types = _try_spacy_classify(
+                    page_texts, name_vocabulary,
+                    progress_callback=self.progress_updated.emit,
+                    progress_start=30,
+                    progress_end=55,
+                )
+            else:
+                spacy_types = {}
+                self.progress_updated.emit(55)
 
             # Build lookup structures for pass 2
             known_names_lower: Dict[str, str] = {}
@@ -1044,7 +1080,7 @@ class NameIndexingThread(QThread):
             # ----------------------------------------------------------
             all_occurrences: Dict[str, List[Tuple[int, str]]] = defaultdict(list)
 
-            for i in range(total_pages):
+            for i in range(self._start_page, total_pages):
                 if not self._is_running:
                     break
 
@@ -1062,7 +1098,7 @@ class NameIndexingThread(QThread):
                         seen_on_page.add(name)
                         all_occurrences[name].append((i, page_label))
 
-                progress = 55 + int((i + 1) / total_pages * 25)
+                progress = 55 + int((i - self._start_page + 1) / indexable * 25)
                 self.progress_updated.emit(progress)
 
             doc.close()
@@ -1079,9 +1115,12 @@ class NameIndexingThread(QThread):
 
             raw_results: Dict[str, List[Tuple[int, str]]] = {}
             for name, occurrences in all_occurrences.items():
-                # Priority: user override > spaCy NER > word-pattern heuristic
-                auto_type = spacy_types.get(name, _auto_classify_name(name))
-                name_type = self._overrides.get(name.lower(), auto_type)
+                if not self._surname_first:
+                    name_type = "place_thing"  # keep natural order for all names
+                else:
+                    # Priority: user override > spaCy NER > word-pattern heuristic
+                    auto_type = spacy_types.get(name, _auto_classify_name(name))
+                    name_type = self._overrides.get(name.lower(), auto_type)
                 display_key = format_name_entry(name, name_type)
                 # Deduplicate by page index
                 seen: set = set()
@@ -1137,4 +1176,4 @@ class NameIndexingThread(QThread):
         if self.strategy == 'logical':
             label = page.get_label()
             return label if label else str(index + 1)
-        return str(index + self.offset)
+        return str(index + 1 + self.offset)
