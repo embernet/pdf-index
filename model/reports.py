@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -92,16 +92,6 @@ def _is_word_subset(a: str, b: str) -> bool:
     return _word_tokens(a) <= _word_tokens(b)
 
 
-def _not_run_section(report_id: str, title: str, description: str) -> ReportSection:
-    return ReportSection(
-        report_id=report_id,
-        title=title,
-        description=description,
-        findings=[],
-        not_run=True,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Analysis functions
 # ---------------------------------------------------------------------------
@@ -145,7 +135,7 @@ def find_similar_terms(raw_results: Dict[str, List[Tuple[int, str]]]) -> ReportS
     for i in range(n):
         if visited[i] or not adj[i]:
             continue
-        # BFS
+        # DFS
         cluster = []
         queue = [i]
         while queue:
@@ -304,7 +294,9 @@ def find_formatting_variants(raw_results: Dict[str, List[Tuple[int, str]]]) -> R
         if len(set(group)) >= 2:
             _register_group(group)
 
-    for fs in sorted(pair_terms, key=lambda s: sorted(s)[0].lower()):
+    all_groups = list(pair_terms.keys())
+    non_subsets = [fs for fs in all_groups if not any(fs < other for other in all_groups)]
+    for fs in sorted(non_subsets, key=lambda s: sorted(s)[0].lower()):
         group_list = sorted(pair_terms[fs])
         pages_by_term = {t: _to_page_refs(raw_results[t]) for t in group_list}
         findings.append(ReportFinding(terms=group_list, pages_by_term=pages_by_term))
@@ -595,6 +587,16 @@ def run_reports(
         title, description = _NOT_RUN_STUBS[rid]
 
         if empty_input or (report_ids is not None and rid not in report_ids):
+            if rid == "thin_entries":
+                description = (
+                    f"Entries appearing on {thin_threshold} page(s) or fewer — "
+                    "may not warrant an index entry."
+                )
+            elif rid == "dense_entries":
+                description = (
+                    f"Entries appearing on {dense_threshold} or more pages — "
+                    "consider adding sub-entries."
+                )
             sections.append(ReportSection(
                 report_id=rid,
                 title=title,
