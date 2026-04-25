@@ -17,6 +17,8 @@ class ReportsView(QWidget):
     run_report_requested  = pyqtSignal(str, int, int)  # (report_id, thin_threshold, dense_threshold)
     navigate_requested    = pyqtSignal(str)            # fragment like "42|Smith, John"
 
+    MAX_LINKS = 15  # Maximum number of page links to display per term
+
     def __init__(self):
         super().__init__()
 
@@ -124,16 +126,16 @@ class ReportsView(QWidget):
         parts = [self._STYLE]
 
         for section in sections:
-            rid = html.escape(section.report_id)
             title = html.escape(section.title)
             desc = html.escape(section.description)
-            run_href = f"#run:{rid}"
+            run_href = f"#run:{section.report_id}"
 
             if section.not_run:
                 parts.append(
                     f'<h3>▶ {title}</h3>'
                     f'<p class="none">Not run — click Run All Reports or '
                     f'<a href="{run_href}">↺ re-run</a></p>'
+                    f'<p class="desc">{desc}</p>'
                 )
             elif not section.findings:
                 parts.append(
@@ -159,6 +161,9 @@ class ReportsView(QWidget):
         return '\n'.join(parts)
 
     def _render_finding(self, finding):
+        if not finding.terms:
+            return ''
+
         esc = html.escape
 
         # Bold term names joined with " / "
@@ -180,15 +185,14 @@ class ReportsView(QWidget):
                 )
                 continue
 
-            MAX_LINKS = 15
             page_links = []
-            for ref in refs[:MAX_LINKS]:
+            for ref in refs[:self.MAX_LINKS]:
                 label_text = format_page_ref(ref.page_idx, ref.page_label)
                 href = f'#{ref.page_idx}|{term}'
-                page_links.append(f'<a href="{href}">{label_text}</a>')
+                page_links.append(f'<a href="{href}">{esc(label_text)}</a>')
 
             pages_html = ', '.join(page_links)
-            remaining = len(refs) - MAX_LINKS
+            remaining = len(refs) - self.MAX_LINKS
             if remaining > 0:
                 pages_html += f' <span class="note">…and {remaining} more</span>'
 
