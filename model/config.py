@@ -5,13 +5,15 @@ class ConfigManager:
     DEFAULT_CONFIG = {
         "pdf_filename": None,
         "strategy": "logical",
-        "offset": 1,
+        "offset": 0,
         "view_mode": "active",
         "capitalize": False,
         "view_source": False,
-        "fit_width": True,
+        "fit_page": True,
         "name_indexing": True,
-        "bold_indexing": False
+        "bold_indexing": False,
+        "index_from_offset": True,
+        "surname_first": False
     }
 
     @staticmethod

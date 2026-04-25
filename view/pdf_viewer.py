@@ -232,23 +232,37 @@ class PDFViewer(QWidget):
         self.toolbar_layout = QHBoxLayout()
         self.prev_btn = QPushButton("Previous")
         self.next_btn = QPushButton("Next")
+
+        # Page label widget: physical number + optional logical label below
+        self._page_label_widget = QWidget()
+        _plw_layout = QVBoxLayout()
+        _plw_layout.setContentsMargins(0, 0, 0, 0)
+        _plw_layout.setSpacing(0)
+        self._page_label_widget.setLayout(_plw_layout)
         self.page_label = QLabel("No PDF loaded")
-        
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_logical_label = QLabel("")
+        self.page_logical_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_logical_label.setStyleSheet("color: gray; font-size: 10px;")
+        self.page_logical_label.setVisible(False)
+        _plw_layout.addWidget(self.page_label)
+        _plw_layout.addWidget(self.page_logical_label)
+
         self.page_slider = QSlider(Qt.Orientation.Horizontal)
         self.page_slider.setMinimum(0)
         self.page_slider.setMaximum(0)
         self.page_slider.setEnabled(False)
         self.page_slider.valueChanged.connect(self._on_slider_changed)
 
-        self.fit_width_chk = QCheckBox("Fit Width")
-        self.fit_width_chk.setChecked(True)
-        self.fit_width_chk.toggled.connect(self.update_view)
+        self.fit_page_chk = QCheckBox("Fit Page")
+        self.fit_page_chk.setChecked(True)
+        self.fit_page_chk.toggled.connect(self.update_view)
 
         self.toolbar_layout.addWidget(self.prev_btn)
-        self.toolbar_layout.addWidget(self.page_label)
+        self.toolbar_layout.addWidget(self._page_label_widget)
         self.toolbar_layout.addWidget(self.next_btn)
         self.toolbar_layout.addWidget(self.page_slider, 1)  # stretch factor
-        self.toolbar_layout.addWidget(self.fit_width_chk)
+        self.toolbar_layout.addWidget(self.fit_page_chk)
         self.layout.addLayout(self.toolbar_layout)
 
         self.prev_btn.clicked.connect(self.prev_page)
@@ -332,12 +346,12 @@ class PDFViewer(QWidget):
         self.image_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.image_label.customContextMenuRequested.connect(self.show_context_menu)
 
-        # Debounce timer for resize-driven fit-width re-rendering
+        # Debounce timer for resize-driven fit-page re-rendering
         self._resize_timer = QTimer()
         self._resize_timer.setSingleShot(True)
         self._resize_timer.setInterval(50)
         self._resize_timer.timeout.connect(self._on_resize_timeout)
-        self._last_viewport_width = 0
+        self._last_viewport_size = (0, 0)
 
         # Scroll-past-edge page turning
         self.scroll_area.installEventFilter(self)
@@ -345,14 +359,15 @@ class PDFViewer(QWidget):
         
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.doc and self.fit_width_chk.isChecked():
+        if self.doc and self.fit_page_chk.isChecked():
             self._resize_timer.start()
 
     def _on_resize_timeout(self):
-        """Re-render after resize settles, but only if viewport width changed."""
-        vp_width = self.scroll_area.viewport().width()
-        if vp_width != self._last_viewport_width:
-            self._last_viewport_width = vp_width
+        """Re-render after resize settles, but only if viewport size changed."""
+        vp = self.scroll_area.viewport()
+        vp_size = (vp.width(), vp.height())
+        if vp_size != self._last_viewport_size:
+            self._last_viewport_size = vp_size
             self.update_view()
 
     # ------------------------------------------------------------------
@@ -424,6 +439,7 @@ class PDFViewer(QWidget):
         self.image_label.clear()
         self.image_label.set_words([], 1.0)
         self.page_label.setText("No PDF loaded")
+        self.page_logical_label.setVisible(False)
         self.prev_btn.setEnabled(False)
         self.next_btn.setEnabled(False)
         self.page_slider.setMaximum(0)
@@ -757,8 +773,8 @@ class PDFViewer(QWidget):
 
         self.image_label.set_accent_highlights(indices)
 
-    def set_fit_width(self, enabled):
-        self.fit_width_chk.setChecked(enabled)
+    def set_fit_page(self, enabled):
+        self.fit_page_chk.setChecked(enabled)
 
     def update_controls(self):
         if not self.doc:
@@ -771,6 +787,13 @@ class PDFViewer(QWidget):
         self.prev_btn.setEnabled(self.current_page_index > 0)
         self.next_btn.setEnabled(self.current_page_index < total - 1)
         self.page_label.setText(f"Page {self.current_page_index + 1} of {total}")
+
+        logical = self.doc.load_page(self.current_page_index).get_label()
+        if logical and logical != str(self.current_page_index + 1):
+            self.page_logical_label.setText(logical)
+            self.page_logical_label.setVisible(True)
+        else:
+            self.page_logical_label.setVisible(False)
 
         self.page_slider.blockSignals(True)
         self.page_slider.setMaximum(total - 1)
@@ -786,11 +809,14 @@ class PDFViewer(QWidget):
         
         # 1. Render Image
         zoom = 1.5
-        if self.fit_width_chk.isChecked():
-            available_width = self.scroll_area.viewport().width() - 20 
-            if available_width > 0:
-                 pdf_width = page.rect.width
-                 zoom = available_width / pdf_width
+        if self.fit_page_chk.isChecked():
+            vp = self.scroll_area.viewport()
+            available_width = vp.width() - 20
+            available_height = vp.height() - 20
+            if available_width > 0 and available_height > 0:
+                zoom_w = available_width / page.rect.width
+                zoom_h = available_height / page.rect.height
+                zoom = min(zoom_w, zoom_h)
         
         self.current_zoom = zoom
         mat = fitz.Matrix(zoom, zoom)

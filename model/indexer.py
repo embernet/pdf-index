@@ -9,12 +9,13 @@ class IndexingThread(QThread):
     indexing_finished = pyqtSignal(dict, dict) # formatted_results, raw_results
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, pdf_path, keywords, page_numbering_strategy, offset=0):
+    def __init__(self, pdf_path, keywords, page_numbering_strategy, offset=0, start_page=0):
         super().__init__()
         self.pdf_path = pdf_path
         self.keywords = keywords
         self.strategy = page_numbering_strategy  # 'logical' or 'physical'
         self.offset = offset
+        self.start_page = start_page
         self._is_running = True
 
     def run(self):
@@ -37,32 +38,31 @@ class IndexingThread(QThread):
                 pattern = re.compile(rf'\b{escaped_kw}\b', re.IGNORECASE)
                 regex_map[norm_kw] = pattern
 
-            for i in range(total_pages):
+            indexable = total_pages - self.start_page
+            for i in range(self.start_page, total_pages):
                 if not self._is_running:
                     break
-                
+
                 page = doc.load_page(i)
                 text = page.get_text("text")
                 norm_text = unicodedata.normalize('NFKC', text)
-                
+
                 page_label = ""
                 if self.strategy == 'logical':
                     page_label = page.get_label()
                     if not page_label:
                         page_label = str(i + 1)
-                else: 
-                    # Physical Page Index + Offset
-                    page_label = str(i + self.offset)
+                else:
+                    # Physical page number (1-based) + offset
+                    page_label = str(i + 1 + self.offset)
 
                 for norm_kw, pattern in regex_map.items():
                     if pattern.search(norm_text):
                         original_kw = keyword_map[norm_kw]
-                        # Avoid duplicates for same page?
-                        # Check last entry to see if it's the same page index
                         if not raw_results[original_kw] or raw_results[original_kw][-1][0] != i:
                             raw_results[original_kw].append((i, page_label))
-                
-                progress = int((i + 1) / total_pages * 100)
+
+                progress = int((i - self.start_page + 1) / indexable * 100)
                 self.progress_updated.emit(progress)
             
             doc.close()

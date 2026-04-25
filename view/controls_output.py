@@ -101,11 +101,17 @@ class ControlsOutput(QWidget):
         
         # Offset
         self.offset_spin = QSpinBox()
-        self.offset_spin.setRange(-50, 50)
-        self.offset_spin.setValue(1)
+        self.offset_spin.setRange(-500, 500)
+        self.offset_spin.setValue(0)
         self.controls_layout.addWidget(QLabel("Offset:"))
         self.controls_layout.addWidget(self.offset_spin)
-        
+
+        self.index_from_offset_chk = QCheckBox("Index only from offset")
+        self.index_from_offset_chk.setChecked(True)
+        self.controls_layout.addWidget(self.index_from_offset_chk)
+        self.offset_spin.valueChanged.connect(self._on_offset_changed)
+        self._on_offset_changed(self.offset_spin.value())
+
         # Options
         self.capitalize_chk = QCheckBox("Capitalize Entries")
         self.capitalize_chk.setChecked(False)
@@ -123,6 +129,12 @@ class ControlsOutput(QWidget):
         self.bold_indexing_chk = QCheckBox("Index Bold Text")
         self.bold_indexing_chk.setChecked(False)
         self.name_options_layout.addWidget(self.bold_indexing_chk)
+
+        self.surname_first_chk = QCheckBox("Surname first")
+        self.surname_first_chk.setChecked(False)
+        self.surname_first_chk.setEnabled(False)
+        self.name_options_layout.addWidget(self.surname_first_chk)
+        self.name_indexing_chk.toggled.connect(self.surname_first_chk.setEnabled)
 
         self.create_btn = QPushButton("Create Index")
         self.create_btn.clicked.connect(self.create_index_requested.emit)
@@ -338,6 +350,10 @@ class ControlsOutput(QWidget):
         self._update_cloud_hint()
         self.cloud_submode_changed.emit(self.get_cloud_submode())
 
+    def _on_offset_changed(self, value):
+        """Enable 'index only from offset' only when offset is negative."""
+        self.index_from_offset_chk.setEnabled(value < 0)
+
     def get_strategy(self):
         return "physical" if self.radio_physical.isChecked() else "logical"
 
@@ -422,9 +438,10 @@ class ControlsOutput(QWidget):
         else:
             self.radio_logical.setChecked(True)
             
-        # Set Offset
-        self.offset_spin.setValue(config.get("offset", 1))
-        
+        # Set Offset (triggers _on_offset_changed → updates enabled state)
+        self.offset_spin.setValue(config.get("offset", 0))
+        self.index_from_offset_chk.setChecked(config.get("index_from_offset", True))
+
         # Set View Mode (migrate legacy "index_cloud" to "tag_cloud")
         mode = config.get("view_mode", "markdown")
         if mode == "index_cloud":
@@ -438,6 +455,7 @@ class ControlsOutput(QWidget):
         self.capitalize_chk.setChecked(config.get("capitalize", False))
         self.name_indexing_chk.setChecked(config.get("name_indexing", False))
         self.bold_indexing_chk.setChecked(config.get("bold_indexing", False))
+        self.surname_first_chk.setChecked(config.get("surname_first", False))
         self.view_source_chk.setChecked(config.get("view_source", False))
 
     def scroll_to_term(self, term):
