@@ -78,6 +78,7 @@ Index files are automatically saved in the project folder when generated.
 - **HTML** — formatted HTML index.
 - **Tag Cloud** — visual word cloud of the PDF text. Existing keywords are highlighted. Click a word to add or remove it as a keyword.
 - **Merge** — tool for combining index entries.
+- **Reports** — nine index quality reports: similar terms, overlapping entries, capitalisation variants, and more. See the Reports section below.
 - **View Source** — toggle to see the raw markup of any text-based output format.
 - **Filter bar** — type to filter the displayed index entries; shows a filtered/total count.
 
