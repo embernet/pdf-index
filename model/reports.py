@@ -267,11 +267,11 @@ def find_formatting_variants(raw_results: Dict[str, List[Tuple[int, str]]]) -> R
 
     terms = list(raw_results.keys())
 
-    # --- Word-order variants (2–4 word terms) ---
+    # --- Word-order variants (2+ word terms) ---
     word_order_groups: Dict[str, List[str]] = {}
     for term in terms:
         words = re.findall(r'\w+', term.casefold())
-        if 2 <= len(words) <= 4:
+        if len(words) >= 2:
             key = ' '.join(sorted(words))
             word_order_groups.setdefault(key, []).append(term)
 
@@ -435,7 +435,7 @@ def find_shared_page_sets(raw_results: Dict[str, List[Tuple[int, str]]]) -> Repo
         run_time_ms = (time.monotonic() - t0) * 1000
         return ReportSection(report_id=report_id, title=title, description=description,
                              findings=findings, run_time_ms=run_time_ms,
-                             not_run=False)  # ran but produced nothing due to size guard
+                             not_run=True)  # skipped due to size guard
 
     terms = list(raw_results.keys())
     n = len(terms)
