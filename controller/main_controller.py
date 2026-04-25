@@ -9,6 +9,7 @@ from model.tag_cloud import TagCloudThread, IndexCloudThread, NotInIndexCloudThr
 from model.name_indexer import NameIndexingThread, DEFAULT_STOPWORDS
 from model.merge_suggestions import find_containment_suggestions
 from model.reports import run_reports
+from view.controls_output import TAB_MODES
 from PyQt6.QtWidgets import QFileDialog, QApplication
 from PyQt6.QtCore import Qt
 
@@ -134,6 +135,7 @@ class MainController:
         from model.config import ConfigManager
 
         self._cached_wordcloud = None  # Invalidate on project change
+        self._last_report_sections = None  # Clear stale report data on project load
 
         # Update App Config (Recent History)
         AppConfigManager.add_recent_project(dir_path)
@@ -178,6 +180,7 @@ class MainController:
         if os.path.exists(index_path):
             try:
                 with open(index_path, 'r', encoding='utf-8') as f:
+                    self._last_report_sections = None  # Clear stale report data before loading
                     self.last_raw_results = json.load(f)
                 self._apply_merge_mappings()
                 self.process_and_display_results()
@@ -254,6 +257,7 @@ class MainController:
         if not self.project_path:
             return
 
+        self._last_report_sections = None  # Clear stale reports when keywords change
         kw_path = os.path.join(self.project_path, "keywords.txt")
         try:
             with open(kw_path, 'w', encoding='utf-8') as f:
@@ -1077,7 +1081,7 @@ class MainController:
             ctrl.set_output("", "reports")
             return
         # Show cached results if available, else run fresh
-        if not hasattr(self, '_last_report_sections') or self._last_report_sections is None:
+        if self._last_report_sections is None:
             self._run_all_reports(
                 ctrl.reports_view.thin_spin.value(),
                 ctrl.reports_view.dense_spin.value(),
@@ -1100,10 +1104,6 @@ class MainController:
         )
         ctrl.reports_view.set_reports(self._last_report_sections)
         ctrl.set_output("", "reports")
-        # Switch to reports tab if not already there
-        if ctrl.get_view_mode() != "reports":
-            from view.controls_output import TAB_MODES
-            ctrl.view_tabs.setCurrentIndex(TAB_MODES.index("reports"))
 
     def _run_single_report(self, report_id, thin_threshold, dense_threshold):
         ctrl = self.view.controls_output
@@ -1119,7 +1119,7 @@ class MainController:
             report_ids=[report_id],
         )
         # Merge into cached sections: replace matching report_id, keep others
-        if not hasattr(self, '_last_report_sections') or self._last_report_sections is None:
+        if self._last_report_sections is None:
             self._last_report_sections = new_sections
         else:
             new_by_id = {s.report_id: s for s in new_sections if not s.not_run}
