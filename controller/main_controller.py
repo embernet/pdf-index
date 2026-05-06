@@ -3,7 +3,7 @@ import os
 import shutil
 import string
 from view.main_window import MainWindow
-from model.indexer import IndexingThread, EMPTY_FLAGS, merge_flags
+from model.indexer import IndexingThread, EMPTY_FLAGS, merge_flags, normalise_raw_results
 from model.app_config import AppConfigManager
 from model.tag_cloud import TagCloudThread, IndexCloudThread, NotInIndexCloudThread, recolor_wordcloud
 from model.name_indexer import NameIndexingThread, DEFAULT_STOPWORDS
@@ -182,7 +182,6 @@ class MainController:
                 with open(index_path, 'r', encoding='utf-8') as f:
                     self._last_report_sections = None  # Clear stale report data before loading
                     self.last_raw_results = json.load(f)
-                from model.indexer import normalise_raw_results
                 normalise_raw_results(self.last_raw_results)
                 self._apply_merge_mappings()
                 self.process_and_display_results()
