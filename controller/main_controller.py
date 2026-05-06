@@ -96,6 +96,7 @@ class MainController:
         self.view.controls_output.active_link_clicked.connect(self.on_active_link_clicked)
         self.view.controls_output.cloud_word_clicked.connect(self.on_cloud_word_clicked)
         self.view.controls_output.cloud_submode_changed.connect(self.update_output_display)
+        self.view.controls_output.style_view_changed.connect(self._on_style_view_changed)
 
         # Auto-highlight indexed words on page change
         self.view.pdf_viewer.page_changed.connect(self._auto_highlight_current_page)
@@ -232,6 +233,7 @@ class MainController:
             "index_italic": ctrl.index_italic_chk.isChecked(),
             "separate_style_files": ctrl.separate_style_files_chk.isChecked(),
             "index_front_matter_roman": ctrl.index_front_matter_chk.isChecked(),
+            "style_view": ctrl.get_style_view(),
         }
         
         from model.config import ConfigManager
@@ -691,6 +693,10 @@ class MainController:
         # Apply auto-highlight to current page now that index is available
         self._auto_highlight_current_page()
 
+    def _on_style_view_changed(self, _bucket):
+        self.save_current_config()
+        self.process_and_display_results()
+
     def update_output_display_toggle(self, _):
         # Called when capitalization toggled
         self.save_current_config()
@@ -700,20 +706,29 @@ class MainController:
         if not self.last_raw_results:
             return
 
-        # Re-process based on capitalization setting
         capitalize = self.view.controls_output.capitalize_chk.isChecked()
-        
-        # Using IndexingThread.process_results logic
-        formatted = IndexingThread.process_results(None, self.last_raw_results, capitalize_keys=capitalize)
+        bucket = self.view.controls_output.get_style_view()
+
+        from model.indexer import filter_by_style
+        if (bucket != "aggregate"
+                and self.view.controls_output.separate_style_files_chk.isChecked()):
+            view_raw = filter_by_style(self.last_raw_results, bucket)
+        else:
+            view_raw = self.last_raw_results
+
+        formatted = IndexingThread.process_results(None, view_raw, capitalize_keys=capitalize)
         self.last_formatted_results = formatted
         self.view.controls_output._total_entry_count = len(formatted)
         self.view.controls_output.entry_count_label.setText(f"{len(formatted)} entries")
-        
-        # Save files
+
+        # Save files (always uses the unfiltered aggregate; per-bucket variants
+        # are produced internally by save_results_to_files).
         if self.project_path:
-            self.save_results_to_files(formatted)
-            
-        # Update Display
+            full_formatted = IndexingThread.process_results(
+                None, self.last_raw_results, capitalize_keys=capitalize,
+            )
+            self.save_results_to_files(full_formatted)
+
         self.update_output_display()
 
     def save_results_to_files(self, results):
@@ -798,7 +813,15 @@ class MainController:
             content = self.generate_html(self.last_formatted_results)
             format_type = 'html'
         elif mode == "active":
-            content = self.generate_active_html(self.last_formatted_results)
+            ctrl_local = self.view.controls_output
+            from model.indexer import filter_by_style
+            bucket = ctrl_local.get_style_view()
+            if (bucket != "aggregate"
+                    and ctrl_local.separate_style_files_chk.isChecked()):
+                active_raw = filter_by_style(self.last_raw_results, bucket)
+            else:
+                active_raw = self.last_raw_results
+            content = self._generate_active_html_for(active_raw)
             format_type = 'active'
 
         ctrl.set_output(content, format_type)
@@ -1235,21 +1258,21 @@ class MainController:
         lines.append("</body></html>")
         return "\n".join(lines)
 
-    def generate_active_html(self, results):
-        if not self.last_raw_results:
-             return ""
+    def _generate_active_html_for(self, raw_results):
+        if not raw_results:
+            return ""
 
         capitalize = self.view.controls_output.capitalize_chk.isChecked()
-        sorted_keys = sorted(self.last_raw_results.keys(), key=lambda x: x.lower())
-        
+        sorted_keys = sorted(raw_results.keys(), key=lambda x: x.lower())
+
         count = len(sorted_keys)
         lines = [f'<html><head><style>a {{ text-decoration: none; color: blue; }} a:hover {{ text-decoration: underline; }}</style></head><body><h1>Active Index ({count} entries)</h1>']
-        
+
         for kw in sorted_keys:
-            pages = self.last_raw_results[kw] # list of (index, label)
+            pages = raw_results[kw]  # list of (idx, label, flags)
             pages.sort(key=lambda x: x[0])
-            
-            if not pages: 
+
+            if not pages:
                 continue
 
             display_kw = kw
@@ -1257,7 +1280,8 @@ class MainController:
                 display_kw = kw[0].upper() + kw[1:]
 
             ranges = []
-            if not pages: continue
+            if not pages:
+                continue
             current_range = [pages[0]]
             for i in range(1, len(pages)):
                 if pages[i][0] == pages[i-1][0] + 1:
@@ -1266,14 +1290,12 @@ class MainController:
                     ranges.append(current_range)
                     current_range = [pages[i]]
             ranges.append(current_range)
-            
+
             link_strings = []
             for r in ranges:
-                # r is list of (idx, lbl, flags)
                 start_idx, start_lbl = r[0][0], r[0][1]
                 end_idx, end_lbl = r[-1][0], r[-1][1]
-                
-                # Format: <a href="#IDX|KEYWORD">LBL</a>
+
                 s_link = f'<a href="#{start_idx}|{kw}">{start_lbl}</a>'
 
                 if len(r) == 1:
@@ -1281,11 +1303,15 @@ class MainController:
                 else:
                     e_link = f'<a href="#{end_idx}|{kw}">{end_lbl}</a>'
                     link_strings.append(f"{s_link}-{e_link}")
-            
+
             lines.append(f"<div><b>{display_kw}</b>: {', '.join(link_strings)}</div>")
 
         lines.append("</body></html>")
         return "\n".join(lines)
+
+    def generate_active_html(self, results):
+        """Existing format-switching helper — kept for backwards compatibility."""
+        return self._generate_active_html_for(self.last_raw_results)
 
     def exit_app(self):
         QApplication.quit()
