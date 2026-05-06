@@ -4,6 +4,35 @@ import unicodedata
 from collections import defaultdict
 from PyQt6.QtCore import QThread, pyqtSignal
 
+_ROMAN_LOOKS_LIKE = re.compile(r'^[IVXLCDMivxlcdm]+$')
+
+
+def to_lowercase_roman(n: int) -> str:
+    """Convert a 1-based positive integer to lowercase roman numerals.
+
+    Returns "" for n <= 0 (defensive guard for callers that mishandle offsets).
+    Supports values up to 3999, which is well beyond any real PDF front matter.
+    """
+    if n <= 0:
+        return ""
+    pairs = [
+        (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
+        (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
+        (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i"),
+    ]
+    out = []
+    for value, symbol in pairs:
+        while n >= value:
+            out.append(symbol)
+            n -= value
+    return "".join(out)
+
+
+def looks_like_roman(label: str) -> bool:
+    """Return True if *label* is a non-empty string of only roman numeral letters."""
+    return bool(label) and bool(_ROMAN_LOOKS_LIKE.match(label))
+
+
 class IndexingThread(QThread):
     progress_updated = pyqtSignal(int)
     indexing_finished = pyqtSignal(dict, dict) # formatted_results, raw_results
