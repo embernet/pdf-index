@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 from PyQt6.QtCore import QThread, pyqtSignal
+from model.indexer import EMPTY_FLAGS, merge_flags
 
 
 # ---------------------------------------------------------------------------
@@ -912,12 +913,13 @@ def resolve_group_pages(
     for variation, occurrences in group.occurrences_by_variation.items():
         if variation == longest:
             continue
-        orphan_pages: Dict[int, str] = {}
-        for page_idx, page_label in occurrences:
+        orphan_pages: Dict[int, tuple] = {}
+        for occ in occurrences:
+            page_idx = occ[0]
             if page_idx not in longest_page_indices:
-                orphan_pages[page_idx] = page_label
+                orphan_pages[page_idx] = occ
         if orphan_pages:
-            result[variation] = sorted(orphan_pages.items(), key=lambda x: x[0])
+            result[variation] = [orphan_pages[k] for k in sorted(orphan_pages.keys())]
 
     return result
 
@@ -1188,7 +1190,7 @@ class NameIndexingThread(QThread):
                 for name in found_names:
                     if name not in seen_on_page:
                         seen_on_page.add(name)
-                        all_occurrences[name].append((i, page_label))
+                        all_occurrences[name].append((i, page_label, dict(EMPTY_FLAGS)))
 
                 progress = 55 + int((i - self._start_page + 1) / indexable * 25)
                 self.progress_updated.emit(progress)
@@ -1224,10 +1226,17 @@ class NameIndexingThread(QThread):
                 deduped.sort(key=lambda x: x[0])
                 # If display-key collision, merge page lists
                 if display_key in raw_results:
-                    existing_indices = {p[0] for p in raw_results[display_key]}
+                    existing_by_idx = {p[0]: idx for idx, p in enumerate(raw_results[display_key])}
                     for p in deduped:
-                        if p[0] not in existing_indices:
+                        if p[0] in existing_by_idx:
+                            slot = existing_by_idx[p[0]]
+                            old = raw_results[display_key][slot]
+                            raw_results[display_key][slot] = (
+                                old[0], old[1], merge_flags(old[2], p[2]),
+                            )
+                        else:
                             raw_results[display_key].append(p)
+                            existing_by_idx[p[0]] = len(raw_results[display_key]) - 1
                     raw_results[display_key].sort(key=lambda x: x[0])
                 else:
                     raw_results[display_key] = deduped

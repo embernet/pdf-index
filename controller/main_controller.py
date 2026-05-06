@@ -3,7 +3,7 @@ import os
 import shutil
 import string
 from view.main_window import MainWindow
-from model.indexer import IndexingThread
+from model.indexer import IndexingThread, EMPTY_FLAGS, merge_flags
 from model.app_config import AppConfigManager
 from model.tag_cloud import TagCloudThread, IndexCloudThread, NotInIndexCloudThread, recolor_wordcloud
 from model.name_indexer import NameIndexingThread, DEFAULT_STOPWORDS
@@ -182,6 +182,8 @@ class MainController:
                 with open(index_path, 'r', encoding='utf-8') as f:
                     self._last_report_sections = None  # Clear stale report data before loading
                     self.last_raw_results = json.load(f)
+                from model.indexer import normalise_raw_results
+                normalise_raw_results(self.last_raw_results)
                 self._apply_merge_mappings()
                 self.process_and_display_results()
                 self._auto_highlight_current_page()
@@ -462,12 +464,20 @@ class MainController:
             if target not in self.last_raw_results:
                 # Target gone (renamed / excluded) — skip stale mapping
                 continue
-            # Merge source pages into target
-            existing_indices = {p[0] for p in self.last_raw_results[target]}
+            # Merge source pages into target, OR-combining flags on collision
+            existing_by_idx = {p[0]: i for i, p in enumerate(self.last_raw_results[target])}
             for p in self.last_raw_results[source]:
-                if p[0] not in existing_indices:
+                if p[0] in existing_by_idx:
+                    slot = existing_by_idx[p[0]]
+                    old = self.last_raw_results[target][slot]
+                    self.last_raw_results[target][slot] = (
+                        old[0], old[1],
+                        merge_flags(old[2] if len(old) > 2 else dict(EMPTY_FLAGS),
+                                    p[2] if len(p) > 2 else dict(EMPTY_FLAGS)),
+                    )
+                else:
                     self.last_raw_results[target].append(p)
-                    existing_indices.add(p[0])
+                    existing_by_idx[p[0]] = len(self.last_raw_results[target]) - 1
             self.last_raw_results[target].sort(key=lambda x: x[0])
             del self.last_raw_results[source]
 
@@ -495,12 +505,20 @@ class MainController:
         if not ok or not target:
             return
 
-        # Perform the merge on live results
-        existing_indices = {p[0] for p in self.last_raw_results[target]}
+        # Perform the merge on live results, OR-combining flags on collision
+        existing_by_idx = {p[0]: i for i, p in enumerate(self.last_raw_results[target])}
         for p in self.last_raw_results[source]:
-            if p[0] not in existing_indices:
+            if p[0] in existing_by_idx:
+                slot = existing_by_idx[p[0]]
+                old = self.last_raw_results[target][slot]
+                self.last_raw_results[target][slot] = (
+                    old[0], old[1],
+                    merge_flags(old[2] if len(old) > 2 else dict(EMPTY_FLAGS),
+                                p[2] if len(p) > 2 else dict(EMPTY_FLAGS)),
+                )
+            else:
                 self.last_raw_results[target].append(p)
-                existing_indices.add(p[0])
+                existing_by_idx[p[0]] = len(self.last_raw_results[target]) - 1
         self.last_raw_results[target].sort(key=lambda x: x[0])
         del self.last_raw_results[source]
 
@@ -628,11 +646,19 @@ class MainController:
         if self._pending_name_raw:
             for key, pages in self._pending_name_raw.items():
                 if key in merged_raw:
-                    # Merge page lists, deduplicate by page index
-                    existing_indices = {p[0] for p in merged_raw[key]}
+                    existing_by_idx = {p[0]: i for i, p in enumerate(merged_raw[key])}
                     for page in pages:
-                        if page[0] not in existing_indices:
+                        if page[0] in existing_by_idx:
+                            slot = existing_by_idx[page[0]]
+                            old = merged_raw[key][slot]
+                            merged_raw[key][slot] = (
+                                old[0], old[1],
+                                merge_flags(old[2] if len(old) > 2 else dict(EMPTY_FLAGS),
+                                            page[2] if len(page) > 2 else dict(EMPTY_FLAGS)),
+                            )
+                        else:
                             merged_raw[key].append(page)
+                            existing_by_idx[page[0]] = len(merged_raw[key]) - 1
                     merged_raw[key].sort(key=lambda x: x[0])
                 else:
                     merged_raw[key] = list(pages)
@@ -889,8 +915,8 @@ class MainController:
         # Find all keywords that have this page in their results
         terms_on_page = []
         for kw, pages in self.last_raw_results.items():
-            for p_idx, p_lbl in pages:
-                if p_idx == page_idx:
+            for p in pages:
+                if p[0] == page_idx:
                     terms_on_page.append(kw)
                     break
 
@@ -989,13 +1015,21 @@ class MainController:
         # Save original pages for undo
         original_pages = list(self.last_raw_results[source])
 
-        # Perform the merge on live results, tracking which pages are new
-        existing_indices = {p[0] for p in self.last_raw_results[target]}
+        # Perform the merge on live results, tracking which pages are new and OR-merging flags
+        existing_by_idx = {p[0]: i for i, p in enumerate(self.last_raw_results[target])}
         added_pages = []
         for p in self.last_raw_results[source]:
-            if p[0] not in existing_indices:
+            if p[0] in existing_by_idx:
+                slot = existing_by_idx[p[0]]
+                old = self.last_raw_results[target][slot]
+                self.last_raw_results[target][slot] = (
+                    old[0], old[1],
+                    merge_flags(old[2] if len(old) > 2 else dict(EMPTY_FLAGS),
+                                p[2] if len(p) > 2 else dict(EMPTY_FLAGS)),
+                )
+            else:
                 self.last_raw_results[target].append(p)
-                existing_indices.add(p[0])
+                existing_by_idx[p[0]] = len(self.last_raw_results[target]) - 1
                 added_pages.append(p)
         self.last_raw_results[target].sort(key=lambda x: x[0])
         del self.last_raw_results[source]
@@ -1191,9 +1225,9 @@ class MainController:
             
             link_strings = []
             for r in ranges:
-                # r is list of (idx, lbl)
-                start_idx, start_lbl = r[0]
-                end_idx, end_lbl = r[-1]
+                # r is list of (idx, lbl, flags)
+                start_idx, start_lbl = r[0][0], r[0][1]
+                end_idx, end_lbl = r[-1][0], r[-1][1]
                 
                 # Format: <a href="#IDX|KEYWORD">LBL</a>
                 s_link = f'<a href="#{start_idx}|{kw}">{start_lbl}</a>'

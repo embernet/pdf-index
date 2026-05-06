@@ -33,6 +33,52 @@ def looks_like_roman(label: str) -> bool:
     return bool(label) and bool(_ROMAN_LOOKS_LIKE.match(label))
 
 
+EMPTY_FLAGS = {"italic": False, "bold": False, "caps": False}
+
+
+def make_flags(italic: bool = False, bold: bool = False, caps: bool = False) -> dict:
+    return {"italic": italic, "bold": bold, "caps": caps}
+
+
+def merge_flags(a: dict, b: dict) -> dict:
+    """OR-combine two flag dicts."""
+    return {
+        "italic": a.get("italic", False) or b.get("italic", False),
+        "bold": a.get("bold", False) or b.get("bold", False),
+        "caps": a.get("caps", False) or b.get("caps", False),
+    }
+
+
+def normalise_occurrence(occ) -> tuple:
+    """Accept a 2-tuple or 3-tuple and always return a 3-tuple with a flag dict.
+
+    Used at every load boundary (in-memory merges, JSON load) to tolerate the
+    legacy 2-element occurrence shape.
+    """
+    if len(occ) == 3:
+        idx, label, flags = occ
+        if not isinstance(flags, dict):
+            flags = dict(EMPTY_FLAGS)
+        else:
+            flags = {
+                "italic": bool(flags.get("italic", False)),
+                "bold": bool(flags.get("bold", False)),
+                "caps": bool(flags.get("caps", False)),
+            }
+        return (idx, label, flags)
+    if len(occ) == 2:
+        idx, label = occ
+        return (idx, label, dict(EMPTY_FLAGS))
+    raise ValueError(f"Unexpected occurrence shape: {occ!r}")
+
+
+def normalise_raw_results(raw_results: dict) -> dict:
+    """Apply normalise_occurrence over every entry in *raw_results* in place."""
+    for key, occurrences in list(raw_results.items()):
+        raw_results[key] = [normalise_occurrence(o) for o in occurrences]
+    return raw_results
+
+
 class IndexingThread(QThread):
     progress_updated = pyqtSignal(int)
     indexing_finished = pyqtSignal(dict, dict) # formatted_results, raw_results
@@ -89,7 +135,7 @@ class IndexingThread(QThread):
                     if pattern.search(norm_text):
                         original_kw = keyword_map[norm_kw]
                         if not raw_results[original_kw] or raw_results[original_kw][-1][0] != i:
-                            raw_results[original_kw].append((i, page_label))
+                            raw_results[original_kw].append((i, page_label, dict(EMPTY_FLAGS)))
 
                 progress = int((i - self.start_page + 1) / indexable * 100)
                 self.progress_updated.emit(progress)
@@ -131,8 +177,8 @@ class IndexingThread(QThread):
             current_range = [pages[0]]
             
             for i in range(1, len(pages)):
-                prev_idx, _ = pages[i-1]
-                curr_idx, curr_lbl = pages[i]
+                prev_idx = pages[i-1][0]
+                curr_idx = pages[i][0]
                 
                 if curr_idx == prev_idx + 1:
                     current_range.append(pages[i])
