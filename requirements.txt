@@ -3,3 +3,4 @@ PyMuPDF
 numpy
 pillow
 wordcloud
+pytest
