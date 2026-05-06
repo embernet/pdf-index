@@ -190,6 +190,8 @@ class StyledToken:
     is_bold: bool
     is_italic: bool
     is_superscript: bool
+    is_all_caps: bool = False           # True if the token alone is all-caps (>=2 letters)
+    from_all_caps_line: bool = False    # True if the line containing this token is fully all-caps
 
 
 @dataclass
@@ -285,6 +287,27 @@ def try_hyphenation_join(prev_word: str, next_word: str) -> Optional[str]:
 # Token extraction
 # ---------------------------------------------------------------------------
 
+def _peek_first_word(block) -> str:
+    """Return the first word-like token in the first line of *block*, or ''."""
+    for line in block.get("lines", []):
+        for span in line.get("spans", []):
+            for match in _TOKEN_RE.finditer(span.get("text", "")):
+                w = match.group()
+                if not _is_punctuation(w):
+                    return w
+        # Empty first line: keep looking
+    return ""
+
+
+def _peek_first_word_of_line(line) -> str:
+    for span in line.get("spans", []):
+        for match in _TOKEN_RE.finditer(span.get("text", "")):
+            w = match.group()
+            if not _is_punctuation(w):
+                return w
+    return ""
+
+
 def extract_styled_tokens(page) -> List[StyledToken]:
     """Extract word-level tokens with bold/italic/superscript flags from a page.
 
@@ -333,6 +356,12 @@ def extract_styled_tokens(page) -> List[StyledToken]:
                             insert_sep = False  # wrapped paragraph text
 
             if insert_sep:
+                prev_word = tokens[-1].text if tokens else ""
+                next_word = _peek_first_word(block)
+                if should_suppress_break(prev_word, next_word):
+                    insert_sep = False
+
+            if insert_sep:
                 tokens.append(StyledToken(
                     text=".", is_bold=False, is_italic=False,
                     is_superscript=False,
@@ -340,6 +369,28 @@ def extract_styled_tokens(page) -> List[StyledToken]:
 
         block_lines = block.get("lines", [])
         for line_idx, line in enumerate(block_lines):
+            # Hyphenation join: if the previous line in this block left a token
+            # ending in "-" and the first word of this line starts lowercase,
+            # fuse them (drop the hyphen) instead of emitting both halves.
+            pending_join_skip = None  # the next-line word we already consumed
+            if line_idx > 0 and tokens:
+                first_word = _peek_first_word_of_line(line)
+                joined = try_hyphenation_join(tokens[-1].text, first_word)
+                if joined is not None:
+                    pending_join_skip = first_word
+                    # Replace the last token's text with the joined form. The
+                    # styling (bold/italic/etc) is inherited from the first half.
+                    old = tokens[-1]
+                    tokens[-1] = StyledToken(
+                        text=joined,
+                        is_bold=old.is_bold,
+                        is_italic=old.is_italic,
+                        is_superscript=old.is_superscript,
+                        is_all_caps=_is_all_caps_word(joined),
+                        from_all_caps_line=old.from_all_caps_line,
+                    )
+
+            line_is_caps = _line_is_all_caps(line.get("spans", []))
             for span in line.get("spans", []):
                 flags = span.get("flags", 0)
                 is_bold = bool(flags & 16)
@@ -349,11 +400,18 @@ def extract_styled_tokens(page) -> List[StyledToken]:
 
                 for match in _TOKEN_RE.finditer(text):
                     word = match.group()
+                    # If this is the first word of the line and we just consumed
+                    # it via hyphenation join, skip emitting it as a separate token.
+                    if pending_join_skip is not None and word == pending_join_skip:
+                        pending_join_skip = None
+                        continue
                     tokens.append(StyledToken(
                         text=word,
                         is_bold=is_bold,
                         is_italic=is_italic,
                         is_superscript=is_superscript,
+                        is_all_caps=_is_all_caps_word(word),
+                        from_all_caps_line=line_is_caps,
                     ))
 
             # Within a block, insert a separator after any non-final line that
@@ -361,16 +419,22 @@ def extract_styled_tokens(page) -> List[StyledToken]:
             # on every line but the last, so only short lines (headings, list
             # entries, paragraph-final lines) trigger a break.  This prevents
             # names from spanning across a newline boundary within one block.
+            # Lexical override: if the last word emitted and the first word of
+            # the next line are both capitalised, the phrase is wrapping —
+            # keep them together.
             is_last_line = (line_idx == len(block_lines) - 1)
             if not is_last_line and tokens and col_width > 0:
                 line_bbox = line.get("bbox")
                 if line_bbox:
                     line_w = line_bbox[2] - line_bbox[0]
                     if line_w < col_width * 0.9:
-                        tokens.append(StyledToken(
-                            text=".", is_bold=False, is_italic=False,
-                            is_superscript=False,
-                        ))
+                        prev_word = tokens[-1].text
+                        next_word = _peek_first_word_of_line(block_lines[line_idx + 1])
+                        if not should_suppress_break(prev_word, next_word):
+                            tokens.append(StyledToken(
+                                text=".", is_bold=False, is_italic=False,
+                                is_superscript=False,
+                            ))
 
         prev_block = block
 
