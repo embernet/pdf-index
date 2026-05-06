@@ -25,7 +25,7 @@ def test_admits_single_all_caps_token_in_mixed_line():
     # NATO sits in mid-sentence with normal-case neighbours.
     tokens = _tokens("the NATO summit")
     names = extract_names_from_tokens(tokens)
-    assert "NATO" in names
+    assert any(n == "NATO" for n, _ in names)
 
 
 def test_skips_all_caps_line():
@@ -39,8 +39,9 @@ def test_admits_all_caps_inside_capitalised_run():
     # "European NATO Summit" — all three capitalised, NATO is all-caps.
     tokens = _tokens("European NATO Summit")
     names = extract_names_from_tokens(tokens)
-    # The whole run is one entry.
-    assert "European NATO Summit" in names
+    by_text = dict(names)
+    assert "European NATO Summit" in by_text
+    assert by_text["European NATO Summit"]["caps"] is True
 
 
 def test_extract_italic_phrase_lowercase():

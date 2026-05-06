@@ -484,7 +484,7 @@ def extract_names_from_tokens(
     include_bold: bool = False,
     exclude_words: Set[str] | None = None,
     stopwords: Set[str] | None = None,
-) -> List[str]:
+) -> List[Tuple[str, dict]]:
     """Scan token sequence and build n-grams of consecutive 'name words'.
 
     Rules:
@@ -511,14 +511,18 @@ def extract_names_from_tokens(
 
     *stopwords* is a set of lowercased words that are prevented from starting
     a new n-gram (but may extend an existing one).
+
+    Returns a list of (name, flags) tuples where flags is a dict with keys
+    'italic', 'bold', 'caps' — OR'd across the constituent tokens.
     """
     if exclude_words is None:
         exclude_words = set()
     if stopwords is None:
         stopwords = set()
 
-    names: List[str] = []
+    names: List[Tuple[str, dict]] = []
     current_ngram: List[str] = []
+    current_flags: dict = {"italic": False, "bold": False, "caps": False}
     current_ngram_italic: Optional[bool] = None  # italic status of the first token in the n-gram
     after_sentence_end = True  # Start of page is effectively a sentence boundary
 
@@ -533,16 +537,18 @@ def extract_names_from_tokens(
         # kept so that names in footnotes are indexed correctly.
         if token.is_superscript and _is_footnote_ref(word):
             if current_ngram:
-                names.append(" ".join(current_ngram))
+                names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
+                current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
             continue
 
         # Punctuation handling
         if _is_punctuation(word):
             if current_ngram:
-                names.append(" ".join(current_ngram))
+                names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
+                current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
             if word in SENTENCE_END_CHARS:
                 after_sentence_end = True
@@ -566,10 +572,17 @@ def extract_names_from_tokens(
             if current_ngram and word[0].isupper():
                 # Mid-name: keep building (will be filtered later if standalone)
                 current_ngram.append(word)
+                if token.is_italic:
+                    current_flags["italic"] = True
+                if token.is_bold:
+                    current_flags["bold"] = True
+                if token.is_all_caps:
+                    current_flags["caps"] = True
             else:
                 if current_ngram:
-                    names.append(" ".join(current_ngram))
+                    names.append((" ".join(current_ngram), dict(current_flags)))
                     current_ngram = []
+                    current_flags = {"italic": False, "bold": False, "caps": False}
                     current_ngram_italic = None
             after_sentence_end = False
             continue
@@ -577,8 +590,9 @@ def extract_names_from_tokens(
         # Filter: structural words (Chapter, Section, ...) — unconditional
         if word_lower in STRUCTURAL_WORDS:
             if current_ngram:
-                names.append(" ".join(current_ngram))
+                names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
+                current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
             after_sentence_end = False
             continue
@@ -589,8 +603,9 @@ def extract_names_from_tokens(
         # not real sentence content.
         if _is_roman_numeral(word):
             if current_ngram:
-                names.append(" ".join(current_ngram))
+                names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
+                current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
             continue
 
@@ -601,8 +616,9 @@ def extract_names_from_tokens(
         # Clearing the flag here would make "Once" look mid-sentence.
         if _is_number_like(word):
             if current_ngram:
-                names.append(" ".join(current_ngram))
+                names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
+                current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
             continue
 
@@ -618,11 +634,18 @@ def extract_names_from_tokens(
         if word_lower in CONNECTOR_WORDS:
             if current_ngram and token.is_italic and current_ngram_italic:
                 current_ngram.append(word)
+                if token.is_italic:
+                    current_flags["italic"] = True
+                if token.is_bold:
+                    current_flags["bold"] = True
+                if token.is_all_caps:
+                    current_flags["caps"] = True
                 after_sentence_end = False
                 continue
             if current_ngram:
-                names.append(" ".join(current_ngram))
+                names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
+                current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
             after_sentence_end = False
             continue
@@ -640,8 +663,9 @@ def extract_names_from_tokens(
                     # otherwise only skip common starters.
                     after_sentence_end = False
                     if current_ngram:
-                        names.append(" ".join(current_ngram))
+                        names.append((" ".join(current_ngram), dict(current_flags)))
                         current_ngram = []
+                        current_flags = {"italic": False, "bold": False, "caps": False}
                         current_ngram_italic = None
                     continue
             is_name_word = True
@@ -657,8 +681,9 @@ def extract_names_from_tokens(
         # as name candidates and proceed to the is_name_word block below.
         if token.is_all_caps and token.from_all_caps_line:
             if current_ngram:
-                names.append(" ".join(current_ngram))
+                names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
+                current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
             continue
 
@@ -669,22 +694,30 @@ def extract_names_from_tokens(
             # Style break: flush the n-gram when italic status changes mid-sequence
             # (e.g. "Adam Gorb's" in plain text followed by italic "Absinthe").
             if current_ngram and token.is_italic != current_ngram_italic:
-                names.append(" ".join(current_ngram))
+                names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
+                current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
             if not current_ngram:
                 current_ngram_italic = token.is_italic
             current_ngram.append(word)
+            if token.is_italic:
+                current_flags["italic"] = True
+            if token.is_bold:
+                current_flags["bold"] = True
+            if token.is_all_caps:
+                current_flags["caps"] = True
         else:
             # Lowercase non-styled, non-connector word: breaks n-gram
             if current_ngram:
-                names.append(" ".join(current_ngram))
+                names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
+                current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
 
     # Flush any remaining n-gram
     if current_ngram:
-        names.append(" ".join(current_ngram))
+        names.append((" ".join(current_ngram), dict(current_flags)))
 
     return names
 
@@ -760,13 +793,16 @@ def find_known_names_in_tokens(
     known_names: Set[str],
     known_names_lower: Dict[str, str],
     max_ngram_len: int,
-) -> List[str]:
+) -> List[Tuple[str, dict]]:
     """Find all occurrences of *known_names* in *tokens*, regardless of
-    sentence position.  Returns a list of matched names (original casing
-    from the vocabulary)."""
+    sentence position.  Returns a list of (name, flags) tuples where name
+    uses the original casing from the vocabulary and flags is a dict with
+    keys 'italic', 'bold', 'caps' OR'd across the spanned tokens."""
 
-    # Build a list of "word" tokens (skip punct / footnote refs / structural)
+    # Build parallel lists of "word" tokens and their per-token flags
+    # (skip punct / footnote refs / structural)
     word_tokens: List[str] = []
+    word_flags: List[dict] = []  # parallel; entry is None where word_tokens is None
     for token in tokens:
         word = token.text.strip()
         if not word:
@@ -776,13 +812,19 @@ def find_known_names_in_tokens(
         if _is_punctuation(word):
             # Insert a sentinel to prevent cross-sentence matching
             word_tokens.append(None)
+            word_flags.append(None)
             continue
         word = _strip_possessive(word)
         if not word:
             continue
         word_tokens.append(word)
+        word_flags.append({
+            "italic": bool(token.is_italic),
+            "bold": bool(token.is_bold),
+            "caps": bool(token.is_all_caps),
+        })
 
-    found: List[str] = []
+    found: List[Tuple[str, dict]] = []
     n_tokens = len(word_tokens)
 
     for i in range(n_tokens):
@@ -804,7 +846,17 @@ def find_known_names_in_tokens(
             candidate = " ".join(span)
             canon = known_names_lower.get(candidate.lower())
             if canon is not None:
-                found.append(canon)
+                flags = {"italic": False, "bold": False, "caps": False}
+                for fj in word_flags[i:i + length]:
+                    if fj is None:
+                        continue
+                    if fj["italic"]:
+                        flags["italic"] = True
+                    if fj["bold"]:
+                        flags["bold"] = True
+                    if fj["caps"]:
+                        flags["caps"] = True
+                found.append((canon, flags))
                 break  # greedy: take longest match starting at i
 
     return found
@@ -1141,7 +1193,8 @@ class NameIndexingThread(QThread):
 
     def __init__(self, pdf_path, page_numbering_strategy, offset=0,
                  include_bold=False, exclude_words=None, stopwords=None,
-                 name_type_overrides=None, start_page=0, surname_first=False):
+                 name_type_overrides=None, start_page=0, surname_first=False,
+                 index_italic=True):
         super().__init__()
         self.pdf_path = pdf_path
         self.strategy = page_numbering_strategy
@@ -1153,6 +1206,7 @@ class NameIndexingThread(QThread):
         self._start_page = start_page
         self._surname_first = surname_first
         self._is_running = True
+        self.index_italic = index_italic
 
     def run(self):
         try:
@@ -1176,14 +1230,21 @@ class NameIndexingThread(QThread):
                 page = doc.load_page(i)
                 page_texts.append(page.get_text("text"))
                 tokens = extract_styled_tokens(page)
-                raw_names = extract_names_from_tokens(
+                raw_named = extract_names_from_tokens(
                     tokens, discovery_mode=True,
                     include_bold=self.include_bold,
                     exclude_words=self.exclude_words,
                     stopwords=self.stopwords,
                 )
+                # raw_named is List[Tuple[str, dict]]; vocabulary only needs strings
+                raw_names = [n for n, _flags in raw_named]
                 names = filter_names(raw_names)
                 name_vocabulary.update(names)
+
+                if self.index_italic:
+                    italic_raw = extract_italic_phrases(tokens)
+                    italic_clean = filter_names(italic_raw)
+                    name_vocabulary.update(italic_clean)
 
                 progress = int((i - self._start_page + 1) / indexable * 30)
                 self.progress_updated.emit(progress)
@@ -1250,11 +1311,29 @@ class NameIndexingThread(QThread):
                     tokens, name_vocabulary, known_names_lower, max_ngram_len,
                 )
 
-                seen_on_page: Set[str] = set()
-                for name in found_names:
-                    if name not in seen_on_page:
-                        seen_on_page.add(name)
-                        all_occurrences[name].append((i, page_label, dict(EMPTY_FLAGS)))
+                # Collect flags per name on this page, OR-merging on duplicates.
+                seen_flags_by_name: dict = {}
+
+                for name, flags in found_names:
+                    if name not in seen_flags_by_name:
+                        seen_flags_by_name[name] = dict(flags)
+                    else:
+                        seen_flags_by_name[name] = merge_flags(seen_flags_by_name[name], flags)
+
+                if self.index_italic:
+                    italic_phrases = extract_italic_phrases(tokens)
+                    italic_clean = filter_names(italic_phrases)
+                    for phrase in italic_clean:
+                        italic_flags = {"italic": True, "bold": False, "caps": False}
+                        if phrase in seen_flags_by_name:
+                            seen_flags_by_name[phrase] = merge_flags(
+                                seen_flags_by_name[phrase], italic_flags,
+                            )
+                        else:
+                            seen_flags_by_name[phrase] = italic_flags
+
+                for name, flags in seen_flags_by_name.items():
+                    all_occurrences[name].append((i, page_label, flags))
 
                 progress = 55 + int((i - self._start_page + 1) / indexable * 25)
                 self.progress_updated.emit(progress)
