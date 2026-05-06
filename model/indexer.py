@@ -79,6 +79,70 @@ def normalise_raw_results(raw_results: dict) -> dict:
     return raw_results
 
 
+def find_keyword_flags_in_tokens(tokens, keyword: str):
+    """Search *tokens* for a whole-word, case-insensitive match of *keyword*.
+
+    Returns the OR'd style flag dict from the spanning tokens, or None if
+    no match.
+
+    The reconstructed page string joins token texts with single spaces; the
+    regex uses Python's standard ``\\b`` word boundaries against that
+    reconstruction. Multi-word keywords work because spaces in *keyword*
+    line up with the joiner.
+    """
+    if not keyword.strip():
+        return None
+
+    parts = []
+    spans = []  # parallel list of (start, end) char offsets in the joined string
+    cursor = 0
+    word_tokens = []  # only the word-like tokens we kept
+    for tok in tokens:
+        text = tok.text
+        if not text:
+            continue
+        # Pure-punctuation tokens (including the synthetic "." sentence-end
+        # tokens emitted by extract_styled_tokens) are emitted into the
+        # reconstruction so multi-word matches do not span sentence boundaries,
+        # but no associated word_token is recorded — flags only come from
+        # real word tokens.
+        if all(unicodedata.category(ch).startswith('P') for ch in text):
+            parts.append(text)
+            spans.append((cursor, cursor + len(text)))
+            cursor += len(text)
+            word_tokens.append(None)
+            parts.append(" ")
+            cursor += 1
+            continue
+        parts.append(text)
+        spans.append((cursor, cursor + len(text)))
+        cursor += len(text)
+        word_tokens.append(tok)
+        parts.append(" ")
+        cursor += 1
+
+    joined = "".join(parts).rstrip()
+    pattern = re.compile(rf'\b{re.escape(keyword)}\b', re.IGNORECASE)
+    m = pattern.search(joined)
+    if not m:
+        return None
+
+    match_start, match_end = m.span()
+    flags = {"italic": False, "bold": False, "caps": False}
+    for tok, (s, e) in zip(word_tokens, spans):
+        if tok is None:
+            continue
+        if e <= match_start or s >= match_end:
+            continue
+        if tok.is_italic:
+            flags["italic"] = True
+        if tok.is_bold:
+            flags["bold"] = True
+        if tok.is_all_caps:
+            flags["caps"] = True
+    return flags
+
+
 class IndexingThread(QThread):
     progress_updated = pyqtSignal(int)
     indexing_finished = pyqtSignal(dict, dict) # formatted_results, raw_results
@@ -119,8 +183,8 @@ class IndexingThread(QThread):
                     break
 
                 page = doc.load_page(i)
-                text = page.get_text("text")
-                norm_text = unicodedata.normalize('NFKC', text)
+                from model.name_indexer import extract_styled_tokens
+                tokens = extract_styled_tokens(page)
 
                 page_label = ""
                 if self.strategy == 'logical':
@@ -131,11 +195,12 @@ class IndexingThread(QThread):
                     # Physical page number (1-based) + offset
                     page_label = str(i + 1 + self.offset)
 
-                for norm_kw, pattern in regex_map.items():
-                    if pattern.search(norm_text):
-                        original_kw = keyword_map[norm_kw]
+                for norm_kw in regex_map.keys():
+                    original_kw = keyword_map[norm_kw]
+                    flags = find_keyword_flags_in_tokens(tokens, norm_kw)
+                    if flags is not None:
                         if not raw_results[original_kw] or raw_results[original_kw][-1][0] != i:
-                            raw_results[original_kw].append((i, page_label, dict(EMPTY_FLAGS)))
+                            raw_results[original_kw].append((i, page_label, flags))
 
                 progress = int((i - self.start_page + 1) / indexable * 100)
                 self.progress_updated.emit(progress)
