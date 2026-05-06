@@ -171,6 +171,41 @@ def find_keyword_flags_in_tokens(tokens, keyword: str):
     return flags
 
 
+STYLE_BUCKETS = ("aggregate", "italic", "bold", "caps", "other")
+
+
+def filter_by_style(raw_results: dict, bucket: str) -> dict:
+    """Return a copy of *raw_results* filtered to occurrences matching *bucket*.
+
+    bucket must be one of STYLE_BUCKETS.
+    - "aggregate": returns raw_results unchanged.
+    - "italic" / "bold" / "caps": keep only occurrences whose flag is True.
+    - "other": keep only occurrences whose flags are all False.
+
+    Entries with no matching occurrences are omitted from the result.
+    """
+    if bucket == "aggregate":
+        return raw_results
+    if bucket not in STYLE_BUCKETS:
+        raise ValueError(f"Unknown bucket: {bucket}")
+
+    out = {}
+    for entry, occurrences in raw_results.items():
+        kept = []
+        for occ in occurrences:
+            occ = normalise_occurrence(occ)
+            flags = occ[2]
+            if bucket == "other":
+                if not (flags["italic"] or flags["bold"] or flags["caps"]):
+                    kept.append(occ)
+            else:
+                if flags.get(bucket, False):
+                    kept.append(occ)
+        if kept:
+            out[entry] = kept
+    return out
+
+
 class IndexingThread(QThread):
     progress_updated = pyqtSignal(int)
     indexing_finished = pyqtSignal(dict, dict) # formatted_results, raw_results
