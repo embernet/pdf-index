@@ -253,6 +253,34 @@ def _is_number_like(word: str) -> bool:
     return word.isdigit() or (len(word) <= 4 and any(ch.isdigit() for ch in word))
 
 
+def should_suppress_break(prev_word: str, next_word: str) -> bool:
+    """Return True if a synthetic line/block-end break should be suppressed
+    because both adjacent words are capitalised (the phrase is wrapping).
+
+    A capitalised word is one whose first character is uppercase (Unicode-aware).
+    Empty strings on either side return False — we cannot know what is happening.
+    """
+    if not prev_word or not next_word:
+        return False
+    return prev_word[0].isupper() and next_word[0].isupper()
+
+
+def try_hyphenation_join(prev_word: str, next_word: str) -> Optional[str]:
+    """If *prev_word* ends in '-' and *next_word* starts with a lowercase letter,
+    return the joined word (hyphen removed). Otherwise return None.
+
+    The lowercase-continuation rule distinguishes mid-syllable line wraps
+    ("Bridge-water") from real hyphenated compounds ("Anglo-Saxon").
+    """
+    if not prev_word or not next_word:
+        return None
+    if not prev_word.endswith("-"):
+        return None
+    if not next_word[0].islower():
+        return None
+    return prev_word[:-1] + next_word
+
+
 # ---------------------------------------------------------------------------
 # Token extraction
 # ---------------------------------------------------------------------------
