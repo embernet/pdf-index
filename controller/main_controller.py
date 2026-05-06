@@ -60,6 +60,12 @@ class MainController:
         self.view.controls_output.name_indexing_chk.toggled.connect(lambda: self.save_current_config())
         self.view.controls_output.bold_indexing_chk.toggled.connect(lambda: self.save_current_config())
         self.view.controls_output.surname_first_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.controls_output.index_italic_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.controls_output.separate_style_files_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.controls_output.separate_style_files_chk.toggled.connect(
+            lambda: self.update_output_display()
+        )
+        self.view.controls_output.index_front_matter_chk.toggled.connect(lambda: self.save_current_config())
 
         # Exclude Editor
         self.view.exclude_editor.save_requested.connect(self.save_excludes)
@@ -223,6 +229,9 @@ class MainController:
             "highlight_indexed": viewer.highlight_indexed_chk.isChecked(),
             "index_from_offset": ctrl.index_from_offset_chk.isChecked(),
             "surname_first": ctrl.surname_first_chk.isChecked(),
+            "index_italic": ctrl.index_italic_chk.isChecked(),
+            "separate_style_files": ctrl.separate_style_files_chk.isChecked(),
+            "index_front_matter_roman": ctrl.index_front_matter_chk.isChecked(),
         }
         
         from model.config import ConfigManager
@@ -565,16 +574,8 @@ class MainController:
         )
         start_page = abs(offset) if (index_from_offset and offset < 0) else 0
 
-        index_front_matter = (
-            self.view.controls_output.index_front_matter_chk.isChecked()
-            if hasattr(self.view.controls_output, 'index_front_matter_chk')
-            else False
-        )
-        index_italic = (
-            self.view.controls_output.index_italic_chk.isChecked()
-            if hasattr(self.view.controls_output, 'index_italic_chk')
-            else True
-        )
+        index_front_matter = self.view.controls_output.index_front_matter_chk.isChecked()
+        index_italic = self.view.controls_output.index_italic_chk.isChecked()
 
         self.view.controls_output.create_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -736,11 +737,7 @@ class MainController:
             with open(base + ".json", 'w', encoding='utf-8') as f:
                 json.dump(self.last_raw_results, f, indent=2)
 
-        separate = (
-            self.view.controls_output.separate_style_files_chk.isChecked()
-            if hasattr(self.view.controls_output, 'separate_style_files_chk')
-            else False
-        )
+        separate = self.view.controls_output.separate_style_files_chk.isChecked()
         style_files = ["italic", "bold", "caps", "other"]
         for bucket in style_files:
             path_base = os.path.join(self.project_path, f"index-{bucket}")

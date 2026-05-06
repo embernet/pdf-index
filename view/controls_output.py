@@ -112,8 +112,15 @@ class ControlsOutput(QWidget):
         self.index_from_offset_chk = QCheckBox("Index only from offset")
         self.index_from_offset_chk.setChecked(True)
         self.controls_layout.addWidget(self.index_from_offset_chk)
+        self.index_front_matter_chk = QCheckBox("Index front matter (roman)")
+        self.index_front_matter_chk.setChecked(True)
+        self.index_front_matter_chk.setEnabled(False)
+        self.controls_layout.addWidget(self.index_front_matter_chk)
         self.offset_spin.valueChanged.connect(self._on_offset_changed)
         self._on_offset_changed(self.offset_spin.value())
+        self.index_from_offset_chk.toggled.connect(
+            lambda _: self._on_offset_changed(self.offset_spin.value())
+        )
 
         # Options
         self.capitalize_chk = QCheckBox("Capitalize Entries")
@@ -133,11 +140,19 @@ class ControlsOutput(QWidget):
         self.bold_indexing_chk.setChecked(False)
         self.name_options_layout.addWidget(self.bold_indexing_chk)
 
+        self.index_italic_chk = QCheckBox("Index Italic")
+        self.index_italic_chk.setChecked(True)
+        self.name_options_layout.addWidget(self.index_italic_chk)
+
         self.surname_first_chk = QCheckBox("Surname first")
         self.surname_first_chk.setChecked(False)
         self.surname_first_chk.setEnabled(False)
         self.name_options_layout.addWidget(self.surname_first_chk)
         self.name_indexing_chk.toggled.connect(self.surname_first_chk.setEnabled)
+
+        self.separate_style_files_chk = QCheckBox("Separate index files by style")
+        self.separate_style_files_chk.setChecked(True)
+        self.name_options_layout.addWidget(self.separate_style_files_chk)
 
         self.create_btn = QPushButton("Create Index")
         self.create_btn.clicked.connect(self.create_index_requested.emit)
@@ -368,8 +383,11 @@ class ControlsOutput(QWidget):
         self.cloud_submode_changed.emit(self.get_cloud_submode())
 
     def _on_offset_changed(self, value):
-        """Enable 'index only from offset' only when offset is negative."""
+        """Enable front-matter related controls only when offset is negative."""
         self.index_from_offset_chk.setEnabled(value < 0)
+        self.index_front_matter_chk.setEnabled(
+            value < 0 and self.index_from_offset_chk.isChecked()
+        )
 
     def get_strategy(self):
         return "physical" if self.radio_physical.isChecked() else "logical"
@@ -472,7 +490,10 @@ class ControlsOutput(QWidget):
         self.capitalize_chk.setChecked(config.get("capitalize", False))
         self.name_indexing_chk.setChecked(config.get("name_indexing", False))
         self.bold_indexing_chk.setChecked(config.get("bold_indexing", False))
+        self.index_italic_chk.setChecked(config.get("index_italic", True))
+        self.separate_style_files_chk.setChecked(config.get("separate_style_files", True))
         self.surname_first_chk.setChecked(config.get("surname_first", False))
+        self.index_front_matter_chk.setChecked(config.get("index_front_matter_roman", True))
         self.view_source_chk.setChecked(config.get("view_source", False))
 
     def scroll_to_term(self, term):

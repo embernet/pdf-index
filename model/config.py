@@ -13,7 +13,11 @@ class ConfigManager:
         "name_indexing": True,
         "bold_indexing": False,
         "index_from_offset": True,
-        "surname_first": False
+        "surname_first": False,
+        "index_italic": True,
+        "separate_style_files": True,
+        "index_front_matter_roman": True,
+        "style_view": "aggregate",
     }
 
     @staticmethod
