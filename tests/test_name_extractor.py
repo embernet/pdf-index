@@ -1,6 +1,7 @@
 from model.name_indexer import (
     StyledToken,
     extract_names_from_tokens,
+    extract_italic_phrases,
 )
 
 
@@ -40,3 +41,37 @@ def test_admits_all_caps_inside_capitalised_run():
     names = extract_names_from_tokens(tokens)
     # The whole run is one entry.
     assert "European NATO Summit" in names
+
+
+def test_extract_italic_phrase_lowercase():
+    # Italic Latin phrase — no word capitalised.
+    tokens = _tokens("in vino veritas", italic=True)
+    out = extract_italic_phrases(tokens)
+    assert "in vino veritas" in out
+
+
+def test_extract_italic_phrase_with_connectors():
+    # Connectors (of, and) do not break italic runs — preserve titles.
+    tokens = _tokens("The Sound of Music", italic=True)
+    out = extract_italic_phrases(tokens)
+    assert "The Sound of Music" in out
+
+
+def test_extract_italic_skips_non_italic():
+    # Plain text is not captured by the italic pass.
+    tokens = _tokens("plain text only", italic=False)
+    out = extract_italic_phrases(tokens)
+    assert out == []
+
+
+def test_extract_italic_break_on_non_italic_word():
+    # Italic phrase ends when italic flag turns off; restarts when it returns.
+    tokens = (
+        _tokens("Pride and Prejudice", italic=True)
+        + _tokens("interrupted", italic=False)
+        + _tokens("Sense and Sensibility", italic=True)
+    )
+    out = extract_italic_phrases(tokens)
+    assert "Pride and Prejudice" in out
+    assert "Sense and Sensibility" in out
+    assert "interrupted" not in out

@@ -689,6 +689,68 @@ def extract_names_from_tokens(
     return names
 
 
+def extract_italic_phrases(tokens: List[StyledToken]) -> List[str]:
+    """Walk *tokens* and emit runs of italic-styled tokens as phrases.
+
+    Rules:
+    - A run starts at the first italic-styled word token and continues
+      while subsequent tokens are also italic.
+    - Punctuation flushes the run.
+    - Structural words (Chapter, Section, ...) flush the run — they only
+      appear in italic by accident.
+    - Connector words (and, of, to, ...) extend the run, since titles
+      legitimately contain them ("The Sound of Music").
+    - Roman numerals, footnote refs, and pure-number tokens are skipped
+      without breaking the run (mirrors extract_names_from_tokens behaviour).
+    - Possessive suffixes are stripped before adding to the run.
+    """
+    phrases: List[str] = []
+    current: List[str] = []
+
+    def flush():
+        if current:
+            phrases.append(" ".join(current))
+            current.clear()
+
+    for token in tokens:
+        word = token.text.strip()
+        if not word:
+            continue
+
+        if not token.is_italic:
+            flush()
+            continue
+
+        if token.is_superscript and _is_footnote_ref(word):
+            flush()
+            continue
+
+        if _is_punctuation(word):
+            flush()
+            continue
+
+        word = _strip_possessive(word)
+        if not word:
+            continue
+
+        if word.lower() in STRUCTURAL_WORDS:
+            flush()
+            continue
+
+        if _is_roman_numeral(word):
+            flush()
+            continue
+
+        if _is_number_like(word):
+            flush()
+            continue
+
+        current.append(word)
+
+    flush()
+    return phrases
+
+
 # ---------------------------------------------------------------------------
 # Known-name search (pass 2)
 # ---------------------------------------------------------------------------
