@@ -634,8 +634,8 @@ def extract_names_from_tokens(
         if word_lower in CONNECTOR_WORDS:
             if current_ngram and token.is_italic and current_ngram_italic:
                 current_ngram.append(word)
-                if token.is_italic:
-                    current_flags["italic"] = True
+                # token.is_italic is guaranteed by the enclosing condition.
+                current_flags["italic"] = True
                 if token.is_bold:
                     current_flags["bold"] = True
                 if token.is_all_caps:
@@ -802,7 +802,7 @@ def find_known_names_in_tokens(
     # Build parallel lists of "word" tokens and their per-token flags
     # (skip punct / footnote refs / structural)
     word_tokens: List[str] = []
-    word_flags: List[dict] = []  # parallel; entry is None where word_tokens is None
+    word_flags: List[dict] = []  # parallel to word_tokens; entry is None at punctuation sentinels
     for token in tokens:
         word = token.text.strip()
         if not word:
