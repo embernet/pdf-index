@@ -1282,9 +1282,15 @@ class MainController:
             ranges = []
             if not pages:
                 continue
+            from model.indexer import looks_like_roman
+
+            def _label_format(label):
+                return "roman" if looks_like_roman(label) else "arabic"
+
             current_range = [pages[0]]
             for i in range(1, len(pages)):
-                if pages[i][0] == pages[i-1][0] + 1:
+                same_format = _label_format(pages[i-1][1]) == _label_format(pages[i][1])
+                if pages[i][0] == pages[i-1][0] + 1 and same_format:
                     current_range.append(pages[i])
                 else:
                     ranges.append(current_range)
