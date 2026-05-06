@@ -716,6 +716,10 @@ class MainController:
         self.update_output_display()
 
     def save_results_to_files(self, results):
+        """Write the aggregate index in md/txt/html/json. When 'separate style files'
+        is enabled, also write per-bucket md/txt/html files; otherwise clean up any
+        stale per-bucket files from a previous run.
+        """
         md_content = self.generate_markdown(results)
         txt_content = self.generate_text(results)
         html_content = self.generate_html(results)
@@ -728,10 +732,42 @@ class MainController:
         with open(base + ".html", 'w', encoding='utf-8') as f:
             f.write(html_content)
 
-        # Persist raw results so the index can be restored on next open
         if self.last_raw_results is not None:
             with open(base + ".json", 'w', encoding='utf-8') as f:
                 json.dump(self.last_raw_results, f, indent=2)
+
+        separate = (
+            self.view.controls_output.separate_style_files_chk.isChecked()
+            if hasattr(self.view.controls_output, 'separate_style_files_chk')
+            else False
+        )
+        style_files = ["italic", "bold", "caps", "other"]
+        for bucket in style_files:
+            path_base = os.path.join(self.project_path, f"index-{bucket}")
+            if separate and self.last_raw_results is not None:
+                from model.indexer import filter_by_style, IndexingThread
+                filtered_raw = filter_by_style(self.last_raw_results, bucket)
+                capitalize = self.view.controls_output.capitalize_chk.isChecked()
+                filtered_formatted = IndexingThread.process_results(
+                    None, filtered_raw, capitalize_keys=capitalize,
+                )
+                self._write_format_files(path_base, filtered_formatted)
+            else:
+                for ext in ("md", "txt", "html"):
+                    stale = path_base + f".{ext}"
+                    if os.path.exists(stale):
+                        try:
+                            os.remove(stale)
+                        except OSError:
+                            pass
+
+    def _write_format_files(self, path_base, formatted_results):
+        md = self.generate_markdown(formatted_results)
+        txt = self.generate_text(formatted_results)
+        html = self.generate_html(formatted_results)
+        for ext, content in (("md", md), ("txt", txt), ("html", html)):
+            with open(path_base + f".{ext}", 'w', encoding='utf-8') as f:
+                f.write(content)
 
     def update_output_display(self, *args):
         ctrl = self.view.controls_output
