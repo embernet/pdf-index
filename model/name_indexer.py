@@ -652,8 +652,10 @@ def extract_names_from_tokens(
 
         after_sentence_end = False
 
-        # All-caps words (section titles like "INTRODUCTION") — always skip.
-        if _is_all_caps_word(word):
+        # All-caps words on an all-caps line (section titles like "INTRODUCTION") — skip.
+        # Single all-caps tokens inside a mixed-case line ("NATO", "CERN") are admitted
+        # as name candidates and proceed to the is_name_word block below.
+        if token.is_all_caps and token.from_all_caps_line:
             if current_ngram:
                 names.append(" ".join(current_ngram))
                 current_ngram = []
