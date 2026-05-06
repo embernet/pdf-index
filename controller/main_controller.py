@@ -565,6 +565,17 @@ class MainController:
         )
         start_page = abs(offset) if (index_from_offset and offset < 0) else 0
 
+        index_front_matter = (
+            self.view.controls_output.index_front_matter_chk.isChecked()
+            if hasattr(self.view.controls_output, 'index_front_matter_chk')
+            else False
+        )
+        index_italic = (
+            self.view.controls_output.index_italic_chk.isChecked()
+            if hasattr(self.view.controls_output, 'index_italic_chk')
+            else True
+        )
+
         self.view.controls_output.create_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         self.view.show_progress("Creating index...")
@@ -579,7 +590,7 @@ class MainController:
         if has_keywords:
             self.indexing_thread = IndexingThread(
                 self.current_pdf_path, keywords, strategy, offset,
-                start_page=start_page,
+                start_page=start_page, index_front_matter=index_front_matter,
             )
             self.indexing_thread.progress_updated.connect(
                 self.view.set_progress
@@ -605,6 +616,7 @@ class MainController:
                 include_bold=bold_enabled, exclude_words=exclude_words,
                 stopwords=stopwords, name_type_overrides=self._name_type_overrides,
                 start_page=start_page, surname_first=surname_first,
+                index_italic=index_italic, index_front_matter=index_front_matter,
             )
             self.name_indexing_thread.progress_updated.connect(
                 self.view.set_progress

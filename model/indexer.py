@@ -33,6 +33,34 @@ def looks_like_roman(label: str) -> bool:
     return bool(label) and bool(_ROMAN_LOOKS_LIKE.match(label))
 
 
+def label_for_page(page, physical_page_number: int, strategy: str,
+                   offset: int = 0, force_roman: bool = False) -> str:
+    """Produce the printable label for a page given indexing strategy.
+
+    *physical_page_number* is 1-based.
+
+    When *force_roman* is True (front-matter pass), prefer the PDF's own label
+    if it looks roman; otherwise generate a lowercase roman from the physical
+    page number.
+    """
+    if force_roman:
+        try:
+            label = page.get_label()
+        except Exception:
+            label = ""
+        if looks_like_roman(label):
+            return label.lower()
+        return to_lowercase_roman(physical_page_number)
+
+    if strategy == 'logical':
+        try:
+            label = page.get_label()
+        except Exception:
+            label = ""
+        return label if label else str(physical_page_number)
+    return str(physical_page_number + offset)
+
+
 EMPTY_FLAGS = {"italic": False, "bold": False, "caps": False}
 
 
@@ -148,7 +176,8 @@ class IndexingThread(QThread):
     indexing_finished = pyqtSignal(dict, dict) # formatted_results, raw_results
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, pdf_path, keywords, page_numbering_strategy, offset=0, start_page=0):
+    def __init__(self, pdf_path, keywords, page_numbering_strategy, offset=0, start_page=0,
+                 index_front_matter=False):
         super().__init__()
         self.pdf_path = pdf_path
         self.keywords = keywords
@@ -156,6 +185,7 @@ class IndexingThread(QThread):
         self.offset = offset
         self.start_page = start_page
         self._is_running = True
+        self.index_front_matter = index_front_matter
 
     def run(self):
         try:
@@ -177,33 +207,39 @@ class IndexingThread(QThread):
                 pattern = re.compile(rf'\b{escaped_kw}\b', re.IGNORECASE)
                 regex_map[norm_kw] = pattern
 
-            indexable = total_pages - self.start_page
-            for i in range(self.start_page, total_pages):
+            from model.name_indexer import extract_styled_tokens
+
+            front_start = 0 if self.index_front_matter and self.start_page > 0 else self.start_page
+            front_end = self.start_page  # exclusive
+            main_start = self.start_page
+            main_end = total_pages
+
+            for kind, page_range in (("front", range(front_start, front_end)),
+                                      ("main", range(main_start, main_end))):
                 if not self._is_running:
                     break
+                if not page_range:
+                    continue
+                force_roman = (kind == "front")
+                for i in page_range:
+                    if not self._is_running:
+                        break
+                    page = doc.load_page(i)
+                    tokens = extract_styled_tokens(page)
+                    page_label = label_for_page(
+                        page, i + 1, self.strategy,
+                        offset=self.offset, force_roman=force_roman,
+                    )
 
-                page = doc.load_page(i)
-                from model.name_indexer import extract_styled_tokens
-                tokens = extract_styled_tokens(page)
+                    for norm_kw in regex_map.keys():
+                        original_kw = keyword_map[norm_kw]
+                        flags = find_keyword_flags_in_tokens(tokens, norm_kw)
+                        if flags is not None:
+                            if not raw_results[original_kw] or raw_results[original_kw][-1][0] != i:
+                                raw_results[original_kw].append((i, page_label, flags))
 
-                page_label = ""
-                if self.strategy == 'logical':
-                    page_label = page.get_label()
-                    if not page_label:
-                        page_label = str(i + 1)
-                else:
-                    # Physical page number (1-based) + offset
-                    page_label = str(i + 1 + self.offset)
-
-                for norm_kw in regex_map.keys():
-                    original_kw = keyword_map[norm_kw]
-                    flags = find_keyword_flags_in_tokens(tokens, norm_kw)
-                    if flags is not None:
-                        if not raw_results[original_kw] or raw_results[original_kw][-1][0] != i:
-                            raw_results[original_kw].append((i, page_label, flags))
-
-                progress = int((i - self.start_page + 1) / indexable * 100)
-                self.progress_updated.emit(progress)
+                    progress = int((i + 1) / total_pages * 100)
+                    self.progress_updated.emit(progress)
             
             doc.close()
             

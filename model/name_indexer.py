@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 from PyQt6.QtCore import QThread, pyqtSignal
-from model.indexer import EMPTY_FLAGS, merge_flags
+from model.indexer import EMPTY_FLAGS, merge_flags, label_for_page
 
 
 # ---------------------------------------------------------------------------
@@ -1194,7 +1194,7 @@ class NameIndexingThread(QThread):
     def __init__(self, pdf_path, page_numbering_strategy, offset=0,
                  include_bold=False, exclude_words=None, stopwords=None,
                  name_type_overrides=None, start_page=0, surname_first=False,
-                 index_italic=True):
+                 index_italic=True, index_front_matter=False):
         super().__init__()
         self.pdf_path = pdf_path
         self.strategy = page_numbering_strategy
@@ -1207,12 +1207,19 @@ class NameIndexingThread(QThread):
         self._surname_first = surname_first
         self._is_running = True
         self.index_italic = index_italic
+        self.index_front_matter = index_front_matter
 
     def run(self):
         try:
             doc = fitz.open(self.pdf_path)
             total_pages = len(doc)
-            indexable = total_pages - self._start_page
+
+            front_range = (range(0, self._start_page)
+                           if self.index_front_matter and self._start_page > 0 else range(0, 0))
+            main_range = range(self._start_page, total_pages)
+            combined_iter = list(front_range) + list(main_range)
+            roman_set = set(front_range)
+            indexable = len(combined_iter)
 
             # ----------------------------------------------------------
             # Pass 1 – Discovery  (0-30 %)
@@ -1223,7 +1230,7 @@ class NameIndexingThread(QThread):
             name_vocabulary: Set[str] = set()
             page_texts: List[str] = []
 
-            for i in range(self._start_page, total_pages):
+            for loop_idx, i in enumerate(combined_iter):
                 if not self._is_running:
                     break
 
@@ -1246,7 +1253,7 @@ class NameIndexingThread(QThread):
                     italic_clean = filter_names(italic_raw)
                     name_vocabulary.update(italic_clean)
 
-                progress = int((i - self._start_page + 1) / indexable * 30)
+                progress = int((loop_idx + 1) / max(indexable, 1) * 30)
                 self.progress_updated.emit(progress)
 
             if not self._is_running:
@@ -1299,12 +1306,15 @@ class NameIndexingThread(QThread):
             # ----------------------------------------------------------
             all_occurrences: Dict[str, List[Tuple[int, str]]] = defaultdict(list)
 
-            for i in range(self._start_page, total_pages):
+            for loop_idx, i in enumerate(combined_iter):
                 if not self._is_running:
                     break
 
                 page = doc.load_page(i)
-                page_label = self._compute_label(page, i)
+                page_label = label_for_page(
+                    page, i + 1, self.strategy,
+                    offset=self.offset, force_roman=(i in roman_set),
+                )
                 tokens = extract_styled_tokens(page)
 
                 found_names = find_known_names_in_tokens(
@@ -1335,7 +1345,7 @@ class NameIndexingThread(QThread):
                 for name, flags in seen_flags_by_name.items():
                     all_occurrences[name].append((i, page_label, flags))
 
-                progress = 55 + int((i - self._start_page + 1) / indexable * 25)
+                progress = 55 + int((loop_idx + 1) / max(indexable, 1) * 25)
                 self.progress_updated.emit(progress)
 
             doc.close()
@@ -1415,9 +1425,3 @@ class NameIndexingThread(QThread):
 
     def stop(self):
         self._is_running = False
-
-    def _compute_label(self, page, index):
-        if self.strategy == 'logical':
-            label = page.get_label()
-            return label if label else str(index + 1)
-        return str(index + 1 + self.offset)
