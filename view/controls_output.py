@@ -81,6 +81,7 @@ class ControlsOutput(QWidget):
     merge_entry_requested = pyqtSignal(str)   # source keyword to merge
     run_reports_requested = pyqtSignal(int, int)
     run_report_requested = pyqtSignal(str, int, int)
+    style_view_changed = pyqtSignal(str)  # "aggregate", "italic", "bold", "caps", "other"
 
     def __init__(self):
         super().__init__()
@@ -224,6 +225,36 @@ class ControlsOutput(QWidget):
         self.cloud_submode_bar.setVisible(False)
         self.output_layout.addWidget(self.cloud_submode_bar)
 
+        self.style_selector_bar = QWidget()
+        style_layout = QHBoxLayout()
+        style_layout.setContentsMargins(0, 2, 0, 2)
+        self.style_selector_bar.setLayout(style_layout)
+
+        self.style_bg = QButtonGroup(self)
+        self.style_aggregate_btn = QRadioButton("Aggregate")
+        self.style_italic_btn = QRadioButton("Italic")
+        self.style_bold_btn = QRadioButton("Bold")
+        self.style_caps_btn = QRadioButton("Caps")
+        self.style_other_btn = QRadioButton("Other")
+        self.style_aggregate_btn.setChecked(True)
+
+        for btn in (self.style_aggregate_btn, self.style_italic_btn,
+                    self.style_bold_btn, self.style_caps_btn, self.style_other_btn):
+            self.style_bg.addButton(btn)
+            style_layout.addWidget(btn)
+        style_layout.addStretch()
+
+        self.style_bg.buttonClicked.connect(self._on_style_changed)
+        self.style_selector_bar.setVisible(False)
+
+        # Place above the search bar. Currently the output_layout adds:
+        #   index 0: tab_layout (addLayout)
+        #   index 1: search_input (addWidget)
+        #   index 2: output_text (addWidget)
+        #   ...
+        # So insertWidget(1, ...) places the selector right above the search bar.
+        self.output_layout.insertWidget(1, self.style_selector_bar)
+
         self.cloud_hint_label = QLabel("")
         self.cloud_hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cloud_hint_label.setStyleSheet("color: #666; font-style: italic;")
@@ -264,6 +295,7 @@ class ControlsOutput(QWidget):
         self.cloud_hint_label.setVisible(False)
         self.merge_view.setVisible(False)
         self.reports_view.setVisible(False)
+        self.style_selector_bar.setVisible(False)
 
         if format_type == 'reports':
             self.reports_view.setVisible(True)
@@ -284,6 +316,8 @@ class ControlsOutput(QWidget):
             return
 
         self.search_input.setVisible(True)
+        if self.separate_style_files_chk.isChecked():
+            self.style_selector_bar.setVisible(True)
         self._raw_content = content
         self._raw_format = format_type
         self._apply_filter()
@@ -368,6 +402,20 @@ class ControlsOutput(QWidget):
         if self.submode_not_in_index_btn.isChecked():
             return "not_in_index"
         return "all"
+
+    def _on_style_changed(self, btn):
+        self.style_view_changed.emit(self.get_style_view())
+
+    def get_style_view(self) -> str:
+        if self.style_italic_btn.isChecked():
+            return "italic"
+        if self.style_bold_btn.isChecked():
+            return "bold"
+        if self.style_caps_btn.isChecked():
+            return "caps"
+        if self.style_other_btn.isChecked():
+            return "other"
+        return "aggregate"
 
     def _update_cloud_hint(self):
         submode = self.get_cloud_submode()
@@ -495,6 +543,15 @@ class ControlsOutput(QWidget):
         self.surname_first_chk.setChecked(config.get("surname_first", False))
         self.index_front_matter_chk.setChecked(config.get("index_front_matter_roman", True))
         self.view_source_chk.setChecked(config.get("view_source", False))
+        mode_view = config.get("style_view", "aggregate")
+        btn = {
+            "aggregate": self.style_aggregate_btn,
+            "italic": self.style_italic_btn,
+            "bold": self.style_bold_btn,
+            "caps": self.style_caps_btn,
+            "other": self.style_other_btn,
+        }.get(mode_view, self.style_aggregate_btn)
+        btn.setChecked(True)
 
     def scroll_to_term(self, term):
         """Scroll the output view to the given index term and highlight it.
