@@ -745,7 +745,7 @@ class MainController:
         for bucket in style_files:
             path_base = os.path.join(self.project_path, f"index-{bucket}")
             if separate and self.last_raw_results is not None:
-                from model.indexer import filter_by_style, IndexingThread
+                from model.indexer import filter_by_style
                 filtered_raw = filter_by_style(self.last_raw_results, bucket)
                 capitalize = self.view.controls_output.capitalize_chk.isChecked()
                 filtered_formatted = IndexingThread.process_results(
