@@ -275,13 +275,18 @@ class IndexingThread(QThread):
             if not pages:
                 continue
                 
+            def _label_format(label: str) -> str:
+                return "roman" if looks_like_roman(label) else "arabic"
+
             current_range = [pages[0]]
-            
+
             for i in range(1, len(pages)):
                 prev_idx = pages[i-1][0]
                 curr_idx = pages[i][0]
-                
-                if curr_idx == prev_idx + 1:
+                prev_fmt = _label_format(pages[i-1][1])
+                curr_fmt = _label_format(pages[i][1])
+
+                if curr_idx == prev_idx + 1 and prev_fmt == curr_fmt:
                     current_range.append(pages[i])
                 else:
                     ranges.append(current_range)
