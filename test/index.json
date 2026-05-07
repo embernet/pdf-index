@@ -1,0 +1,574 @@
+{
+  "Beatrice Halloway": [
+    [
+      0,
+      "1",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ],
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Cambridge": [
+    [
+      0,
+      "1",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Edmund Crawley": [
+    [
+      0,
+      "1",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ],
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Royal Conservatory": [
+    [
+      0,
+      "1",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ],
+    [
+      2,
+      "3",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Beatrice": [
+    [
+      2,
+      "3",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Alistair Pemberton": [
+    [
+      0,
+      "1",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Pemberton": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ],
+    [
+      2,
+      "3",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Manchester": [
+    [
+      0,
+      "1",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Echoes of the Bridgewater Hall": [
+    [
+      0,
+      "1",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Bridgewater Hall": [
+    [
+      0,
+      "1",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ],
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "England": [
+    [
+      0,
+      "1",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Edmund": [
+    [
+      2,
+      "3",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Cygnus": [
+    [
+      0,
+      "1",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ],
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ],
+    [
+      2,
+      "3",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "The Guardian": [
+    [
+      0,
+      "1",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ],
+    [
+      1,
+      "2",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "The Sound of Music": [
+    [
+      0,
+      "1",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Sound of Music": [
+    [
+      0,
+      "1",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "War and Peace": [
+    [
+      0,
+      "1",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Latin": [
+    [
+      0,
+      "1",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Bertrand": [
+    [
+      0,
+      "1",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "BBC": [
+    [
+      0,
+      "1",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": true
+      }
+    ],
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": true
+      }
+    ]
+  ],
+  "in vino veritas": [
+    [
+      0,
+      "1",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ],
+    [
+      1,
+      "2",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Margaret O\u2019Donnell": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "CERN": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": true
+      }
+    ]
+  ],
+  "NATO": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": true
+      }
+    ]
+  ],
+  "Thomas Beecham": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Anglican": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Royal Northern College": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Manchester Free Trade Hall": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ],
+    [
+      2,
+      "3",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Adam Gorb": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "John McCabe": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Anthony Burgess": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Absinthe": [
+    [
+      1,
+      "2",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Cloudcatcher Fells": [
+    [
+      1,
+      "2",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "A Clockwork Orange": [
+    [
+      1,
+      "2",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Clockwork Orange": [
+    [
+      1,
+      "2",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Concerto for Orchestra": [
+    [
+      1,
+      "2",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "French": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Halle Orchestra": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Halle Choir": [
+    [
+      1,
+      "2",
+      {
+        "italic": false,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "col legno": [
+    [
+      1,
+      "2",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "the polonaise": [
+    [
+      1,
+      "2",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "A Style-Aware Indexer for Long-Form Scholarly Prose": [
+    [
+      2,
+      "3",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ],
+  "Style-Aware Indexer for Long-Form Scholarly Prose": [
+    [
+      2,
+      "3",
+      {
+        "italic": true,
+        "bold": false,
+        "caps": false
+      }
+    ]
+  ]
+}

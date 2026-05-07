@@ -1,0 +1,18 @@
+{
+    "pdf_filename": "test.pdf",
+    "strategy": "logical",
+    "offset": 0,
+    "view_mode": "active",
+    "capitalize": false,
+    "view_source": false,
+    "fit_page": true,
+    "name_indexing": true,
+    "bold_indexing": true,
+    "highlight_indexed": true,
+    "index_from_offset": true,
+    "surname_first": false,
+    "index_italic": true,
+    "separate_style_files": true,
+    "index_front_matter_roman": true,
+    "style_view": "aggregate"
+}

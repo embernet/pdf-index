@@ -76,3 +76,26 @@ def test_extract_italic_break_on_non_italic_word():
     assert "Pride and Prejudice" in out
     assert "Sense and Sensibility" in out
     assert "interrupted" not in out
+
+
+def test_extract_italic_drops_title_prefix():
+    # An italic title prefix (Dr, Mr, Mrs, Sir) is skipped without breaking
+    # the run, so "Dr Edmund Crawley" italic yields "Edmund Crawley".
+    tokens = _tokens("Dr Edmund Crawley", italic=True)
+    out = extract_italic_phrases(tokens)
+    assert "Edmund Crawley" in out
+    assert "Dr Edmund Crawley" not in out
+
+
+def test_extract_italic_drops_lone_stop_word():
+    # A single-token italic run that is just a stop word is dropped.
+    tokens = _tokens("the", italic=True)
+    out = extract_italic_phrases(tokens)
+    assert out == []
+
+
+def test_extract_italic_keeps_stop_word_in_phrase():
+    # Stop words inside a multi-token italic phrase are preserved.
+    tokens = _tokens("the polonaise", italic=True)
+    out = extract_italic_phrases(tokens)
+    assert "the polonaise" in out

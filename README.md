@@ -55,14 +55,13 @@ Unit tests for the pure-logic helpers run via `pytest`:
 pytest tests/ -v
 ```
 
-For end-to-end verification, `test/test.md` contains a short story corpus plus an appendix listing the expected index entries. Convert it to PDF and run the indexer against it:
+For end-to-end verification, `test/test.md` contains a short story corpus that exercises every indexing rule, and `test/expected.md` documents the expected index entries. Run the bundled checker — it builds the PDF (via pandoc), runs the name indexer headlessly, and compares the output against the expected entries in one step:
 
 ```bash
-pandoc test/test.md -o test/test.pdf
-python main.py
+python test/check_index.py
 ```
 
-Then import `test/test.pdf` into a project and click *Create Index*. Compare the generated `index.md` and per-style files against the appendix in `test/test.md`.
+Output reports `passed / failed / warnings / extras` and lists any required-rule violations. A non-zero exit code means at least one required check failed.
 
 ## Tech Stack
 

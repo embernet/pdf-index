@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""Compare a generated pdf-index output against the expected entries
-documented in the appendix of test/test.md.
+"""Build the test PDF, run the name indexer headlessly, and compare the
+generated output against the expected entries documented in test/expected.md.
 
 Usage:
-    python test/check_index.py <project-directory>
+    python test/check_index.py [<project-directory>]
 
-Where <project-directory> is the pdf-index project folder containing the
-generated index.json and (optionally) the per-style files index-italic.md,
-index-bold.md, index-caps.md, index-other.md.
-
-Exit code is 0 when all required checks pass, 1 if any FAIL is reported.
-Extras (entries the indexer found that the appendix did not anticipate)
-are printed as informational and do not cause a failure — proper-noun
-detection legitimately picks up words beyond the curated list.
+If <project-directory> is omitted, the test/ folder itself is used as the
+project. The script will:
+  1. Run pandoc to convert test/test.md to test/test.pdf (skipped if the
+     PDF already exists and is newer than the source).
+  2. Run NameIndexingThread on the PDF (no GUI required) and write
+     index.json, index.md, and the per-style index-*.md files into the
+     project directory.
+  3. Compare the entries against the EXPECTED and FORBIDDEN lists below.
+  4. Print a pass/fail report and exit non-zero on any required failure.
 """
 
 import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -50,11 +53,13 @@ EXPECTED = {
     "John McCabe":                     set(),
     "Manchester":                      set(),
     "Manchester Free Trade Hall":      set(),
-    "Margaret O'Donnell":              set(),
+    # pandoc smart-quotes converts ' to U+2019 in the PDF; match that.
+    "Margaret O’Donnell":         set(),
     "NATO":                            {"caps"},
     "Pemberton":                       set(),
     "Royal Conservatory":              set(),
     "Royal Northern College":          set(),
+    "the polonaise":                   {"italic"},
     "The Guardian":                    {"italic"},
     "The Sound of Music":              {"italic"},
     "Thomas Beecham":                  set(),
@@ -127,32 +132,170 @@ def expected_per_bucket():
 # Main
 # ---------------------------------------------------------------------------
 
+def run_name_indexer(pdf_path: Path, project: Path) -> bool:
+    """Run the name indexer on *pdf_path* and write index files into *project*.
+
+    Returns True on success, False on failure.
+    """
+    # The script lives in test/, the model lives in ../model. Make the project
+    # root importable.
+    repo_root = Path(__file__).resolve().parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    try:
+        from PyQt6.QtWidgets import QApplication
+        from model.indexer import IndexingThread, filter_by_style
+        from model.name_indexer import NameIndexingThread, DEFAULT_STOPWORDS
+    except ImportError as e:
+        print(f"error: failed to import indexer modules: {e}")
+        print("Run `pip install -r requirements.txt` from the repo root.")
+        return False
+
+    # A QApplication is required for QThread internals even though we never
+    # show a window.
+    _ = QApplication.instance() or QApplication([])
+
+    print(f"running name indexer on {pdf_path.name}...")
+
+    thread = NameIndexingThread(
+        str(pdf_path),
+        "logical",
+        0,
+        include_bold=False,
+        exclude_words=set(),
+        stopwords=DEFAULT_STOPWORDS,
+        name_type_overrides={},
+        start_page=0,
+        surname_first=False,
+        index_italic=True,
+        index_front_matter=False,
+    )
+
+    captured = {}
+
+    def _on_finished(_formatted, raw):
+        captured.update(raw)
+
+    thread.indexing_finished.connect(_on_finished)
+    # .run() executes synchronously in this thread; .start() would spawn a real
+    # OS thread and we'd have to wait on the event loop.
+    thread.run()
+
+    if not captured:
+        print("error: name indexer produced no entries")
+        return False
+
+    # Write the aggregate index.json.
+    base = project / "index"
+    with open(str(base) + ".json", "w", encoding="utf-8") as f:
+        json.dump(captured, f, indent=2)
+
+    # Write index.md, index.txt, index.html, and per-style files.
+    formatted = IndexingThread.process_results(None, captured)
+    _write_format_files(base, formatted)
+
+    for bucket in ("italic", "bold", "caps", "other"):
+        filtered_raw = filter_by_style(captured, bucket)
+        filtered_formatted = IndexingThread.process_results(None, filtered_raw)
+        _write_format_files(project / f"index-{bucket}", filtered_formatted)
+
+    print(f"  wrote index.json with {len(captured)} entries")
+    return True
+
+
+def _write_format_files(path_base: Path, results: dict) -> None:
+    count = len(results)
+    md_lines = [f"# Index ({count} entries)\n"]
+    txt_lines = [f"Index ({count} entries)\n"]
+    html_lines = [f"<html><body><h1>Index ({count} entries)</h1>"]
+    for kw, pages in results.items():
+        md_lines.append(f"**{kw}**: {pages}  ")
+        txt_lines.append(f"{kw}: {pages}")
+        html_lines.append(f"<div><b>{kw}</b>: {pages}</div>")
+    html_lines.append("</body></html>")
+    with open(str(path_base) + ".md", "w", encoding="utf-8") as f:
+        f.write("\n".join(md_lines))
+    with open(str(path_base) + ".txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(txt_lines))
+    with open(str(path_base) + ".html", "w", encoding="utf-8") as f:
+        f.write("\n".join(html_lines))
+
+
+def build_pdf(source_md: Path, target_pdf: Path) -> bool:
+    """Run pandoc to convert *source_md* to *target_pdf*.
+
+    Returns True if the PDF is fresh (built or already up to date), False on
+    pandoc failure. Skips the build when the PDF is newer than the source.
+    """
+    if not source_md.exists():
+        print(f"error: source file {source_md} not found")
+        return False
+
+    if (target_pdf.exists()
+            and target_pdf.stat().st_mtime >= source_md.stat().st_mtime):
+        return True
+
+    if shutil.which("pandoc") is None:
+        print("error: pandoc not found on PATH")
+        print("Install pandoc (https://pandoc.org/) and re-run this script.")
+        return False
+
+    print(f"building {target_pdf.name} from {source_md.name}...")
+    try:
+        result = subprocess.run(
+            ["pandoc", str(source_md), "-o", str(target_pdf)],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError as e:
+        print(f"error: failed to invoke pandoc: {e}")
+        return False
+
+    if result.returncode != 0:
+        print(f"error: pandoc exited {result.returncode}")
+        if result.stderr:
+            print(result.stderr)
+        return False
+
+    return True
+
+
 def main():
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(2)
+    test_dir = Path(__file__).resolve().parent
+    source_md = test_dir / "test.md"
+    target_pdf = test_dir / "test.pdf"
 
-    arg = Path(sys.argv[1]).expanduser().resolve()
-
-    # Accept either a project directory (containing index.json) or a direct
-    # path to index.json itself.
-    if arg.is_file() and arg.name == "index.json":
-        index_path = arg
-        project = arg.parent
+    if len(sys.argv) >= 2:
+        arg = Path(sys.argv[1]).expanduser().resolve()
+        if arg.is_file() and arg.name == "index.json":
+            index_path = arg
+            project = arg.parent
+        else:
+            project = arg
+            index_path = project / "index.json"
     else:
-        project = arg
+        # Default: use the test/ folder itself as the project directory.
+        project = test_dir
         index_path = project / "index.json"
 
-    if not index_path.exists():
+    # Step 1: ensure the PDF exists (rebuild if source is newer).
+    if not build_pdf(source_md, target_pdf):
+        sys.exit(2)
+
+    # Step 2: run the indexer if no index.json exists, or if the PDF is newer.
+    needs_run = (not index_path.exists()
+                 or index_path.stat().st_mtime < target_pdf.stat().st_mtime)
+    if needs_run and project == test_dir:
+        if not run_name_indexer(target_pdf, project):
+            sys.exit(2)
+    elif not index_path.exists():
         print(f"error: index.json not found at {index_path}")
         print()
-        print("Pass the pdf-index PROJECT directory (the folder you opened in")
-        print("the GUI when you imported test.pdf), not the test/ source folder.")
-        print("The project directory is where the indexer writes index.json,")
-        print("index.md, index.txt, index.html, and the per-style index-*.md files.")
-        print()
-        print("Example:")
-        print("    python test/check_index.py ~/MyProjects/pdf-index-test")
+        print("Open the pdf-index app, create or open a project at the path")
+        print("above, import test/test.pdf, click *Create Index*, then re-run")
+        print("this script. Or omit the project argument to use test/ as the")
+        print("project (the script will run the indexer for you):")
+        print("    python test/check_index.py")
         sys.exit(2)
 
     with open(index_path) as f:

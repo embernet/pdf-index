@@ -177,8 +177,9 @@ NON_PERSON_NAME_WORDS = {
 _ROMAN_RE = re.compile(r'^[IVXLCDM]+$')
 
 # Regex to split span text into word tokens and punctuation.
-# Matches: word chars (including hyphens/apostrophes inside), OR single punctuation.
-_TOKEN_RE = re.compile(r"[\w][\w'\u2019-]*[\w]|[\w]|[^\s\w]", re.UNICODE)
+# Matches: word chars (with internal apostrophes/hyphens, optionally trailing
+# hyphen for line-break hyphenation), OR a single punctuation char.
+_TOKEN_RE = re.compile(r"[\w][\w'\u2019-]*|[^\s\w]", re.UNICODE)
 
 
 # ---------------------------------------------------------------------------
@@ -676,10 +677,15 @@ def extract_names_from_tokens(
 
         after_sentence_end = False
 
-        # All-caps words on an all-caps line (section titles like "INTRODUCTION") — skip.
-        # Single all-caps tokens inside a mixed-case line ("NATO", "CERN") are admitted
-        # as name candidates and proceed to the is_name_word block below.
-        if token.is_all_caps and token.from_all_caps_line:
+        # Tokens on a fully all-caps line (section titles like "INTRODUCTION"
+        # or "THE INDEXER'S APPRENTICE") — skip the whole token regardless of
+        # whether it is itself all-caps; apostrophe-containing words such as
+        # "INDEXER'S" are not flagged is_all_caps but are still part of the
+        # heading and must not be indexed.
+        # Single all-caps tokens inside a mixed-case line ("NATO", "CERN")
+        # are admitted as name candidates and proceed to the is_name_word
+        # block below.
+        if token.from_all_caps_line:
             if current_ngram:
                 names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
@@ -733,15 +739,26 @@ def extract_italic_phrases(tokens: List[StyledToken]) -> List[str]:
       appear in italic by accident.
     - Connector words (and, of, to, ...) extend the run, since titles
       legitimately contain them ("The Sound of Music").
+    - Title prefixes (Dr, Mr, Mrs, Sir, ...) are skipped without breaking
+      the run, mirroring extract_names_from_tokens. This prevents
+      "*Dr Edmund Crawley*" from producing a separate italic entry that
+      duplicates the name pass's "Edmund Crawley".
     - Roman numerals, footnote refs, and pure-number tokens are skipped
       without breaking the run (mirrors extract_names_from_tokens behaviour).
     - Possessive suffixes are stripped before adding to the run.
+    - A captured run consisting of a single token that is itself a stop
+      word ("the", "a", "every", "some", ...) is dropped, since lone
+      italic stop words are almost never legitimate index entries.
     """
     phrases: List[str] = []
     current: List[str] = []
 
     def flush():
         if current:
+            # Drop a single-token run that is just a stop word.
+            if len(current) == 1 and current[0].lower() in DEFAULT_STOPWORDS:
+                current.clear()
+                return
             phrases.append(" ".join(current))
             current.clear()
 
@@ -768,6 +785,11 @@ def extract_italic_phrases(tokens: List[StyledToken]) -> List[str]:
 
         if word.lower() in STRUCTURAL_WORDS:
             flush()
+            continue
+
+        # Title prefixes (Dr, Mr, Mrs, ...) are skipped without breaking
+        # the run, so an italic "Dr Edmund Crawley" yields "Edmund Crawley".
+        if word.lower().rstrip('.') in TITLE_PREFIXES:
             continue
 
         if _is_roman_numeral(word):
