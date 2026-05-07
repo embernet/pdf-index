@@ -1431,6 +1431,14 @@ class NameIndexingThread(QThread):
             cap_vocab: Set[str] = set()
             italic_vocab: Set[str] = set()
             bold_vocab: Set[str] = set()
+            # For each capitalised-pass observation we record the flag
+            # dict so that — after pass 1 finishes — we can decide
+            # whether a single-word entry deserves a place in cap_vocab.
+            # A single word that was ONLY ever observed italic (or
+            # bold) is routed to italic_vocab / bold_vocab so that
+            # find_known_names_in_tokens does not later match plain
+            # occurrences of it elsewhere in the document.
+            cap_observations: Dict[str, List[dict]] = defaultdict(list)
             page_texts: List[str] = []
 
             for loop_idx, i in enumerate(combined_iter):
@@ -1448,9 +1456,11 @@ class NameIndexingThread(QThread):
                         exclude_words=self.exclude_words,
                         stopwords=self.stopwords,
                     )
-                    raw_names = [n for n, _flags in raw_named]
-                    names = filter_names(raw_names)
-                    cap_vocab.update(names)
+                    for name, flags in raw_named:
+                        cleaned = clean_name(name)
+                        if not cleaned or len(cleaned) <= 1 or cleaned.isdigit():
+                            continue
+                        cap_observations[cleaned].append(flags)
 
                 if self.index_italic:
                     italic_raw = extract_italic_phrases(tokens)
@@ -1462,6 +1472,34 @@ class NameIndexingThread(QThread):
 
                 progress = int((loop_idx + 1) / max(indexable, 1) * 30)
                 self.progress_updated.emit(progress)
+
+            # Decide cap_vocab membership using the aggregated observations.
+            # Multi-word entries always join cap_vocab (the multi-word
+            # context is specific enough that over-matching is unlikely).
+            # Single-word entries join cap_vocab only if at least one
+            # mid-sentence observation was PLAIN (no italic, no bold).
+            # Otherwise they're routed to italic_vocab / bold_vocab —
+            # so a single italic publication name like "Piano" cannot
+            # later match plain "Piano" via find_known_names_in_tokens.
+            for cleaned, observations in cap_observations.items():
+                is_multi_word = " " in cleaned
+                if is_multi_word:
+                    cap_vocab.add(cleaned)
+                    continue
+                has_plain = any(
+                    not o.get("italic") and not o.get("bold")
+                    for o in observations
+                )
+                if has_plain:
+                    cap_vocab.add(cleaned)
+                    continue
+                # All observations were styled — route to the matching
+                # style vocab. Most observations will agree; if mixed,
+                # admit to whichever style appeared in any observation.
+                if any(o.get("italic") for o in observations):
+                    italic_vocab.add(cleaned)
+                if any(o.get("bold") for o in observations):
+                    bold_vocab.add(cleaned)
 
             if not self._is_running:
                 doc.close()

@@ -157,6 +157,25 @@ def test_styled_bypass_single_word_dropped():
     assert not any(n == "Piano" for n, _ in names)
 
 
+def test_italic_only_mid_sentence_word_emits_with_italic_flag():
+    """A capitalised word that only ever appears italic mid-sentence
+    (e.g. an italicised publication name 'Piano') is still emitted by
+    extract_names_from_tokens — but with italic=True in its flag dict
+    so the controller can route it to italic_vocab instead of cap_vocab.
+    """
+    # "the journal Piano covers" — Piano italic, mid-sentence.
+    tokens = (
+        _tokens("the journal", italic=False)
+        + _tokens("Piano", italic=True)
+        + _tokens("covers everything", italic=False)
+    )
+    names = extract_names_from_tokens(tokens)
+    by_text = dict(names)
+    assert "Piano" in by_text
+    assert by_text["Piano"]["italic"] is True
+    assert by_text["Piano"]["bold"] is False
+
+
 def test_styled_bypass_multi_word_kept():
     """Multi-word styled n-grams admitted via styled-bypass are kept —
     the bypass exists precisely so titles like 'The Sound of Music'
