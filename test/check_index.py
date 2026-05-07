@@ -132,11 +132,27 @@ def main():
         print(__doc__)
         sys.exit(2)
 
-    project = Path(sys.argv[1]).expanduser().resolve()
-    index_path = project / "index.json"
+    arg = Path(sys.argv[1]).expanduser().resolve()
+
+    # Accept either a project directory (containing index.json) or a direct
+    # path to index.json itself.
+    if arg.is_file() and arg.name == "index.json":
+        index_path = arg
+        project = arg.parent
+    else:
+        project = arg
+        index_path = project / "index.json"
+
     if not index_path.exists():
-        print(f"error: {index_path} not found")
-        print("Has the indexer been run on this project?")
+        print(f"error: index.json not found at {index_path}")
+        print()
+        print("Pass the pdf-index PROJECT directory (the folder you opened in")
+        print("the GUI when you imported test.pdf), not the test/ source folder.")
+        print("The project directory is where the indexer writes index.json,")
+        print("index.md, index.txt, index.html, and the per-style index-*.md files.")
+        print()
+        print("Example:")
+        print("    python test/check_index.py ~/MyProjects/pdf-index-test")
         sys.exit(2)
 
     with open(index_path) as f:
