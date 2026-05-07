@@ -568,6 +568,15 @@ def extract_names_from_tokens(
     current_flags: dict = {"italic": False, "bold": False, "caps": False}
     current_ngram_italic: Optional[bool] = None  # italic status of the first token in the n-gram
     after_sentence_end = True  # Start of page is effectively a sentence boundary
+    # True when this n-gram's FIRST word was admitted via the styled
+    # bypass at sentence-start (italic/bold-styled capitalised word that
+    # would otherwise have been filtered as sentence-initial). If the
+    # n-gram only ever has one word, that bypass is the sole reason for
+    # its existence — so we drop it on flush. Without this guard a
+    # single italic publication name like "Piano" at the start of a
+    # sentence would seed the vocabulary and pull in every plain
+    # "Piano" elsewhere in the document.
+    started_with_styled_bypass = False
 
     for token in tokens:
         word = token.text.strip()
@@ -580,19 +589,23 @@ def extract_names_from_tokens(
         # kept so that names in footnotes are indexed correctly.
         if token.is_superscript and _is_footnote_ref(word):
             if current_ngram:
-                names.append((" ".join(current_ngram), dict(current_flags)))
+                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                    names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
+                started_with_styled_bypass = False
             continue
 
         # Punctuation handling
         if _is_punctuation(word):
             if current_ngram:
-                names.append((" ".join(current_ngram), dict(current_flags)))
+                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                    names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
+                started_with_styled_bypass = False
             if word in SENTENCE_END_CHARS:
                 after_sentence_end = True
             continue
@@ -633,10 +646,12 @@ def extract_names_from_tokens(
         # Filter: structural words (Chapter, Section, ...) — unconditional
         if word_lower in STRUCTURAL_WORDS:
             if current_ngram:
-                names.append((" ".join(current_ngram), dict(current_flags)))
+                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                    names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
+                started_with_styled_bypass = False
             after_sentence_end = False
             continue
 
@@ -646,10 +661,12 @@ def extract_names_from_tokens(
         # not real sentence content.
         if _is_roman_numeral(word):
             if current_ngram:
-                names.append((" ".join(current_ngram), dict(current_flags)))
+                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                    names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
+                started_with_styled_bypass = False
             continue
 
         # Filter: number-like tokens.
@@ -659,10 +676,12 @@ def extract_names_from_tokens(
         # Clearing the flag here would make "Once" look mid-sentence.
         if _is_number_like(word):
             if current_ngram:
-                names.append((" ".join(current_ngram), dict(current_flags)))
+                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                    names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
+                started_with_styled_bypass = False
             continue
 
         # Title prefixes: skip the word but keep building the n-gram
@@ -686,30 +705,39 @@ def extract_names_from_tokens(
                 after_sentence_end = False
                 continue
             if current_ngram:
-                names.append((" ".join(current_ngram), dict(current_flags)))
+                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                    names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
+                started_with_styled_bypass = False
             after_sentence_end = False
             continue
 
         # Determine if this is a "name word"
         is_name_word = False
 
+        admitted_via_styled_bypass = False
         if word[0].isupper():
             # Sentence-initial capitalisation check
             if after_sentence_end:
                 if is_styled:
-                    pass  # Styled words bypass sentence-initial filter
+                    # Styled words bypass the sentence-initial filter,
+                    # but if this is the first word of a new n-gram we
+                    # mark the n-gram so a single-word bypass admission
+                    # gets dropped at flush time.
+                    admitted_via_styled_bypass = True
                 elif discovery_mode or word_lower in SENTENCE_START_IGNORE:
                     # In discovery mode skip ALL sentence-initial caps;
                     # otherwise only skip common starters.
                     after_sentence_end = False
                     if current_ngram:
-                        names.append((" ".join(current_ngram), dict(current_flags)))
+                        if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                            names.append((" ".join(current_ngram), dict(current_flags)))
                         current_ngram = []
                         current_flags = {"italic": False, "bold": False, "caps": False}
                         current_ngram_italic = None
+                        started_with_styled_bypass = False
                     continue
             is_name_word = True
 
@@ -729,10 +757,12 @@ def extract_names_from_tokens(
         # block below.
         if token.from_all_caps_line:
             if current_ngram:
-                names.append((" ".join(current_ngram), dict(current_flags)))
+                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                    names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
+                started_with_styled_bypass = False
             continue
 
         if is_name_word:
@@ -742,12 +772,15 @@ def extract_names_from_tokens(
             # Style break: flush the n-gram when italic status changes mid-sequence
             # (e.g. "Adam Gorb's" in plain text followed by italic "Absinthe").
             if current_ngram and token.is_italic != current_ngram_italic:
-                names.append((" ".join(current_ngram), dict(current_flags)))
+                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                    names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
+                started_with_styled_bypass = False
             if not current_ngram:
                 current_ngram_italic = token.is_italic
+                started_with_styled_bypass = admitted_via_styled_bypass
             current_ngram.append(word)
             if token.is_italic:
                 current_flags["italic"] = True
@@ -758,14 +791,17 @@ def extract_names_from_tokens(
         else:
             # Lowercase non-styled, non-connector word: breaks n-gram
             if current_ngram:
-                names.append((" ".join(current_ngram), dict(current_flags)))
+                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                    names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False}
                 current_ngram_italic = None
+                started_with_styled_bypass = False
 
     # Flush any remaining n-gram
     if current_ngram:
-        names.append((" ".join(current_ngram), dict(current_flags)))
+        if not (len(current_ngram) == 1 and started_with_styled_bypass):
+            names.append((" ".join(current_ngram), dict(current_flags)))
 
     return names
 
@@ -1384,11 +1420,17 @@ class NameIndexingThread(QThread):
 
             # ----------------------------------------------------------
             # Pass 1 – Discovery  (0-30 %)
-            # Extract names using strict sentence-initial filtering so
-            # only names confirmed by mid-sentence usage enter the vocab.
-            # Collect plain page text here so Pass 1.5 can reuse it.
+            # Build three vocabularies: capitalised (the "regular" set
+            # used by find_known_names_in_tokens to match plain prose),
+            # italic-only (entries that ONLY appeared as italic phrases),
+            # and bold-only (entries that ONLY appeared as bold phrases).
+            # The latter two are NOT given to find_known_names so that a
+            # single italic publication name like "Piano" does not pull
+            # in every plain "Piano" elsewhere in the document.
             # ----------------------------------------------------------
-            name_vocabulary: Set[str] = set()
+            cap_vocab: Set[str] = set()
+            italic_vocab: Set[str] = set()
+            bold_vocab: Set[str] = set()
             page_texts: List[str] = []
 
             for loop_idx, i in enumerate(combined_iter):
@@ -1406,20 +1448,17 @@ class NameIndexingThread(QThread):
                         exclude_words=self.exclude_words,
                         stopwords=self.stopwords,
                     )
-                    # raw_named is List[Tuple[str, dict]]; vocab only needs strings.
                     raw_names = [n for n, _flags in raw_named]
                     names = filter_names(raw_names)
-                    name_vocabulary.update(names)
+                    cap_vocab.update(names)
 
                 if self.index_italic:
                     italic_raw = extract_italic_phrases(tokens)
-                    italic_clean = filter_names(italic_raw)
-                    name_vocabulary.update(italic_clean)
+                    italic_vocab.update(filter_names(italic_raw))
 
                 if self.include_bold:
                     bold_raw = extract_bold_phrases(tokens)
-                    bold_clean = filter_names(bold_raw)
-                    name_vocabulary.update(bold_clean)
+                    bold_vocab.update(filter_names(bold_raw))
 
                 progress = int((loop_idx + 1) / max(indexable, 1) * 30)
                 self.progress_updated.emit(progress)
@@ -1428,14 +1467,23 @@ class NameIndexingThread(QThread):
                 doc.close()
                 return
 
-            # Remove standalone stopwords from the vocabulary.
-            # Multi-word names containing a stopword (e.g. "The Guardian")
-            # are kept; only single-word entries that are stopwords are purged.
+            # Drop standalone stopwords from every vocab. Multi-word
+            # names containing a stopword (e.g. "The Guardian") are kept;
+            # only single-word entries that are stopwords are purged.
             if self.stopwords:
-                name_vocabulary = {
-                    name for name in name_vocabulary
-                    if " " in name or name.lower() not in self.stopwords
+                stopword_filter = lambda v: {
+                    n for n in v
+                    if " " in n or n.lower() not in self.stopwords
                 }
+                cap_vocab = stopword_filter(cap_vocab)
+                italic_vocab = stopword_filter(italic_vocab)
+                bold_vocab = stopword_filter(bold_vocab)
+
+            # The full vocabulary is the union, used for spaCy
+            # classification only. find_known_names_in_tokens uses just
+            # cap_vocab so italic-only and bold-only entries don't match
+            # at non-styled positions.
+            name_vocabulary = cap_vocab | italic_vocab | bold_vocab
 
             if not name_vocabulary:
                 doc.close()
@@ -1445,9 +1493,6 @@ class NameIndexingThread(QThread):
 
             # ----------------------------------------------------------
             # Pass 1.5 – spaCy NER classification  (30-55 %)
-            # Only needed when surname_first is on, because that is the
-            # only case where name type (person vs place/thing) affects
-            # the output.  Skip entirely otherwise to keep indexing fast.
             # ----------------------------------------------------------
             if self._surname_first:
                 spacy_types = _try_spacy_classify(
@@ -1460,10 +1505,10 @@ class NameIndexingThread(QThread):
                 spacy_types = {}
                 self.progress_updated.emit(55)
 
-            # Build lookup structures for pass 2
+            # Build lookup structures for pass 2 — cap_vocab only.
             known_names_lower: Dict[str, str] = {}
             max_ngram_len = 1
-            for name in name_vocabulary:
+            for name in cap_vocab:
                 known_names_lower[name.lower()] = name
                 max_ngram_len = max(max_ngram_len, len(name.split()))
 
@@ -1486,7 +1531,7 @@ class NameIndexingThread(QThread):
                 tokens = extract_styled_tokens(page)
 
                 found_names = find_known_names_in_tokens(
-                    tokens, name_vocabulary, known_names_lower, max_ngram_len,
+                    tokens, cap_vocab, known_names_lower, max_ngram_len,
                 )
 
                 # Collect flags per name on this page, OR-merging on duplicates.

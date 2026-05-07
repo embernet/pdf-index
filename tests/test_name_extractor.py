@@ -138,3 +138,31 @@ def test_extract_bold_phrase_skips_non_bold():
     tokens = _tokens("plain text only", italic=False)
     out = extract_bold_phrases(tokens)
     assert out == []
+
+
+def test_styled_bypass_single_word_dropped():
+    """A single capitalised word admitted via the styled-bypass at
+    sentence-start (italic 'Piano' alone) is dropped on flush. Without
+    this rule, the word would seed the vocabulary and find_known_names
+    would then match every plain 'Piano' elsewhere in the document.
+    """
+    # Italic "Piano" at sentence-start, followed by a lowercase italic
+    # word that ends the n-gram. With the old behaviour the n-gram
+    # ['Piano'] would be emitted via styled bypass.
+    tokens = (
+        _tokens("Piano", italic=True)        # styled-bypass admit
+        + _tokens("notes", italic=False)     # lowercase: ends the n-gram
+    )
+    names = extract_names_from_tokens(tokens)
+    assert not any(n == "Piano" for n, _ in names)
+
+
+def test_styled_bypass_multi_word_kept():
+    """Multi-word styled n-grams admitted via styled-bypass are kept —
+    the bypass exists precisely so titles like 'The Sound of Music'
+    starting at a paragraph break don't get filtered.
+    """
+    # Italic "Pride and Prejudice" at sentence-start.
+    tokens = _tokens("Pride and Prejudice", italic=True)
+    names = extract_names_from_tokens(tokens)
+    assert any(n == "Pride and Prejudice" for n, _ in names)
