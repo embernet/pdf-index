@@ -43,3 +43,91 @@ def test_hyphenation_join_no_trailing_hyphen():
 def test_hyphenation_join_empty():
     assert try_hyphenation_join("", "water") is None
     assert try_hyphenation_join("Bridge-", "") is None
+
+
+def test_style_aware_break_at_block_boundary():
+    """A bold heading block followed by a plain-styled paragraph block
+    must be split by a synthetic break, even though both adjacent words
+    are capitalised. Without the style-mismatch override, the lexical
+    rule would suppress the break and merge "James Crow" with "Gosh".
+    """
+    from model.name_indexer import extract_styled_tokens
+
+    class FakePage:
+        def __init__(self, data):
+            self._data = data
+        def get_text(self, mode):
+            assert mode == "dict"
+            return self._data
+
+    data = {
+        "blocks": [
+            {
+                "type": 0,
+                "lines": [{
+                    "bbox": (0.0, 0.0, 50.0, 10.0),  # short heading line
+                    "spans": [{"text": "James Crow", "flags": 16}],  # bold
+                }],
+            },
+            {
+                "type": 0,
+                "lines": [{
+                    "bbox": (0.0, 12.0, 200.0, 22.0),  # full-width paragraph line
+                    "spans": [{
+                        "text": "Gosh wanted to test the indexer.",
+                        "flags": 0,
+                    }],
+                }],
+            },
+        ],
+    }
+
+    tokens = extract_styled_tokens(FakePage(data))
+    texts = [t.text for t in tokens]
+    crow_idx = texts.index("Crow")
+    gosh_idx = texts.index("Gosh")
+    between = texts[crow_idx + 1:gosh_idx]
+    assert "." in between, (
+        f"expected synthetic '.' separator between bold heading and "
+        f"plain paragraph; got: {texts}"
+    )
+
+
+def test_style_aware_break_suppressed_when_styles_match():
+    """If both lines share the same style (e.g. plain prose wrapping),
+    the lexical rule still suppresses the break so a wrapped name like
+    'Beatrice Halloway' is preserved.
+    """
+    from model.name_indexer import extract_styled_tokens
+
+    class FakePage:
+        def __init__(self, data):
+            self._data = data
+        def get_text(self, mode):
+            return self._data
+
+    data = {
+        "blocks": [{
+            "type": 0,
+            "lines": [
+                {
+                    "bbox": (0.0, 0.0, 50.0, 10.0),  # short line
+                    "spans": [{"text": "...wrote Beatrice", "flags": 0}],
+                },
+                {
+                    "bbox": (0.0, 12.0, 200.0, 22.0),  # next line
+                    "spans": [{"text": "Halloway later that week.", "flags": 0}],
+                },
+            ],
+        }],
+    }
+
+    tokens = extract_styled_tokens(FakePage(data))
+    texts = [t.text for t in tokens]
+    bea_idx = texts.index("Beatrice")
+    hall_idx = texts.index("Halloway")
+    between = texts[bea_idx + 1:hall_idx]
+    assert "." not in between, (
+        f"plain-styled wrapping should not get a synthetic '.'; "
+        f"got: {texts}"
+    )

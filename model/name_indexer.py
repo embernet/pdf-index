@@ -297,23 +297,39 @@ def try_hyphenation_join(prev_word: str, next_word: str) -> Optional[str]:
 
 def _peek_first_word(block) -> str:
     """Return the first word-like token in the first line of *block*, or ''."""
-    for line in block.get("lines", []):
-        for span in line.get("spans", []):
-            for match in _TOKEN_RE.finditer(span.get("text", "")):
-                w = match.group()
-                if not _is_punctuation(w):
-                    return w
-        # Empty first line: keep looking
-    return ""
+    info = _peek_first_styled_word(block)
+    return info[0] if info else ""
 
 
 def _peek_first_word_of_line(line) -> str:
+    info = _peek_first_styled_word_of_line(line)
+    return info[0] if info else ""
+
+
+def _peek_first_styled_word(block):
+    """Return (word, is_bold, is_italic) for the first non-punctuation token
+    in the first line of *block*, or None if no such token exists.
+    """
+    for line in block.get("lines", []):
+        result = _peek_first_styled_word_of_line(line)
+        if result is not None:
+            return result
+    return None
+
+
+def _peek_first_styled_word_of_line(line):
+    """Return (word, is_bold, is_italic) for the first non-punctuation token
+    in *line*, or None if no such token exists.
+    """
     for span in line.get("spans", []):
+        flags = span.get("flags", 0)
+        is_bold = bool(flags & 16)
+        is_italic = bool(flags & 2)
         for match in _TOKEN_RE.finditer(span.get("text", "")):
             w = match.group()
             if not _is_punctuation(w):
-                return w
-    return ""
+                return (w, is_bold, is_italic)
+    return None
 
 
 def extract_styled_tokens(page) -> List[StyledToken]:
@@ -365,9 +381,16 @@ def extract_styled_tokens(page) -> List[StyledToken]:
 
             if insert_sep:
                 prev_word = tokens[-1].text if tokens else ""
-                next_word = _peek_first_word(block)
+                next_info = _peek_first_styled_word(block)
+                next_word = next_info[0] if next_info else ""
                 if should_suppress_break(prev_word, next_word):
-                    insert_sep = False
+                    # Style mismatch overrides the lexical suppress: a bold
+                    # heading line followed by a plain-styled paragraph
+                    # word must NOT be merged into a single phrase.
+                    if (next_info is None
+                            or (tokens[-1].is_bold == next_info[1]
+                                and tokens[-1].is_italic == next_info[2])):
+                        insert_sep = False
 
             if insert_sep:
                 tokens.append(StyledToken(
@@ -437,8 +460,21 @@ def extract_styled_tokens(page) -> List[StyledToken]:
                     line_w = line_bbox[2] - line_bbox[0]
                     if line_w < col_width * 0.9:
                         prev_word = tokens[-1].text
-                        next_word = _peek_first_word_of_line(block_lines[line_idx + 1])
-                        if not should_suppress_break(prev_word, next_word):
+                        next_info = _peek_first_styled_word_of_line(
+                            block_lines[line_idx + 1]
+                        )
+                        next_word = next_info[0] if next_info else ""
+                        # Suppress the synthetic break only if the lexical
+                        # rule says so AND the next line's first word
+                        # shares the previous word's bold/italic styling.
+                        # A style change (e.g. bold heading → plain body)
+                        # is a strong signal these are different contexts.
+                        suppress = should_suppress_break(prev_word, next_word)
+                        if suppress and next_info is not None:
+                            if (tokens[-1].is_bold != next_info[1]
+                                    or tokens[-1].is_italic != next_info[2]):
+                                suppress = False
+                        if not suppress:
                             tokens.append(StyledToken(
                                 text=".", is_bold=False, is_italic=False,
                                 is_superscript=False,
