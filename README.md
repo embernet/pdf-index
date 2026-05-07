@@ -47,6 +47,23 @@ pdf-index/
 └── requirements.txt
 ```
 
+## Testing
+
+Unit tests for the pure-logic helpers run via `pytest`:
+
+```bash
+pytest tests/ -v
+```
+
+For end-to-end verification, `test/test.md` contains a short story corpus plus an appendix listing the expected index entries. Convert it to PDF and run the indexer against it:
+
+```bash
+pandoc test/test.md -o test/test.pdf
+python main.py
+```
+
+Then import `test/test.pdf` into a project and click *Create Index*. Compare the generated `index.md` and per-style files against the appendix in `test/test.md`.
+
 ## Tech Stack
 
 - **PyQt6** -- Desktop GUI framework
