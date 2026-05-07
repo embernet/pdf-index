@@ -497,7 +497,9 @@ class PDFViewer(QWidget):
         hyphenation-joined pair (PDF word ending in '-' followed by a PDF
         word starting with a lowercase letter — the same rule the indexer
         applies to reconstruct line-break-split words like 'Manch-' +
-        'ester' = 'Manchester'.
+        'ester' = 'Manchester'). Possessive suffixes ('s, ’s) on the PDF
+        word are stripped before comparison so 'Pemberton's' matches
+        'Pemberton'.
 
         Returns the list of PDF-word indices consumed by the match, or
         None if no match is possible.
@@ -510,10 +512,10 @@ class PDFViewer(QWidget):
             if pdf_pos >= len(words):
                 return None
 
-            target_stripped = target_word.strip('.,;:!?()[]{}"\'-/')
+            target_stripped = self._normalise_word(target_word)
 
             word_text = unicodedata.normalize("NFKC", words[pdf_pos][4])
-            word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
+            word_stripped = self._normalise_word(word_text)
 
             if self._words_equal(word_stripped, target_stripped):
                 matched.append(pdf_pos)
@@ -527,7 +529,7 @@ class PDFViewer(QWidget):
                     and words[pdf_pos + 1][4][0].islower()):
                 joined = (word_text[:-1]
                           + unicodedata.normalize("NFKC", words[pdf_pos + 1][4]))
-                joined_stripped = joined.strip('.,;:!?()[]{}"\'-/')
+                joined_stripped = self._normalise_word(joined)
                 if self._words_equal(joined_stripped, target_stripped):
                     matched.append(pdf_pos)
                     matched.append(pdf_pos + 1)
@@ -537,6 +539,18 @@ class PDFViewer(QWidget):
             return None
 
         return matched
+
+    @staticmethod
+    def _normalise_word(word: str) -> str:
+        """Strip surrounding punctuation and possessive suffix ('s/’s)
+        before comparison.
+        """
+        stripped = word.strip('.,;:!?()[]{}"\'-/')
+        # Possessive: trailing 's or ’s. Apostrophes inside a word
+        # (e.g. O'Donnell) don't count as possessives.
+        if stripped.endswith("'s") or stripped.endswith("’s"):
+            stripped = stripped[:-2]
+        return stripped
 
     @staticmethod
     def _words_equal(pdf_word, target_word):
@@ -705,7 +719,16 @@ class PDFViewer(QWidget):
     # ------------------------------------------------------------------
 
     def highlight_multiple_terms(self, terms):
-        """Highlight all occurrences of multiple terms on the current page."""
+        """Highlight all occurrences of multiple terms on the current page.
+
+        Also performs proximity highlighting: when a multi-word indexed
+        term (e.g. 'Beatrice Halloway') is found on the page, standalone
+        occurrences of any of its constituent capitalised words on the
+        same page are also highlighted and attributed to the multi-word
+        term. This mirrors the indexer's suppression rule, which assumes
+        a bare first name or surname near its full form refers to the
+        same person.
+        """
         words = self.image_label.words
         if not words or not terms:
             self.image_label.set_highlights([])
@@ -714,6 +737,8 @@ class PDFViewer(QWidget):
         all_indices = set()
         term_map = {}  # word_index -> original term string
 
+        # Pass 1: direct matches for each indexed term.
+        multi_word_owners = {}  # word -> term that contains this word
         for term in terms:
             for term_words in self._search_variants(term):
                 if not term_words:
@@ -724,6 +749,26 @@ class PDFViewer(QWidget):
                         for idx in matched:
                             all_indices.add(idx)
                             term_map[idx] = term
+                # Record constituent words from any multi-word variant for
+                # the proximity pass below.
+                if len(term_words) > 1:
+                    for w in term_words:
+                        if w and w[0].isupper():
+                            multi_word_owners.setdefault(w, term)
+
+        # Pass 2: proximity highlights — for any constituent capitalised
+        # word of a multi-word term that's been matched on the page, also
+        # highlight bare standalone occurrences and attribute them to the
+        # owning compound term.
+        for constituent, owning_term in multi_word_owners.items():
+            for i in range(len(words)):
+                if i in all_indices:
+                    continue  # already highlighted as part of the full term
+                matched = self._match_term_at(words, i, [constituent])
+                if matched is not None:
+                    for idx in matched:
+                        all_indices.add(idx)
+                        term_map[idx] = owning_term
 
         self.image_label.set_highlights(sorted(all_indices), term_map)
 

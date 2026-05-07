@@ -86,83 +86,22 @@ class ControlsOutput(QWidget):
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout()
+        self.layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(self.layout)
-        
-        # Controls Group
-        self.controls_layout = QHBoxLayout()
-        
-        # Strategy
-        self.strategy_bg = QButtonGroup(self)
-        self.radio_physical = QRadioButton("Physical Page")
-        self.radio_logical = QRadioButton("Logical Label")
-        self.strategy_bg.addButton(self.radio_physical)
-        self.strategy_bg.addButton(self.radio_logical)
-        self.radio_logical.setChecked(True)
-        
-        self.controls_layout.addWidget(QLabel("Page Strategy:"))
-        self.controls_layout.addWidget(self.radio_physical)
-        self.controls_layout.addWidget(self.radio_logical)
-        
-        # Offset
-        self.offset_spin = QSpinBox()
-        self.offset_spin.setRange(-500, 500)
-        self.offset_spin.setValue(0)
-        self.controls_layout.addWidget(QLabel("Offset:"))
-        self.controls_layout.addWidget(self.offset_spin)
 
-        self.index_from_offset_chk = QCheckBox("Index only from offset")
-        self.index_from_offset_chk.setChecked(True)
-        self.controls_layout.addWidget(self.index_from_offset_chk)
-        self.index_front_matter_chk = QCheckBox("Index front matter (roman)")
-        self.index_front_matter_chk.setChecked(True)
-        self.index_front_matter_chk.setEnabled(False)
-        self.controls_layout.addWidget(self.index_front_matter_chk)
-        self.offset_spin.valueChanged.connect(self._on_offset_changed)
-        self._on_offset_changed(self.offset_spin.value())
-        self.index_from_offset_chk.toggled.connect(
-            lambda _: self._on_offset_changed(self.offset_spin.value())
-        )
+        # The settings widgets (page strategy/offset, name-indexing toggles,
+        # output options, Create Index button) live in SettingsSidebar; this
+        # widget now just owns the index-output area (tabs, search bar,
+        # output text/cloud/merge/reports views).
 
-        # Options
-        self.capitalize_chk = QCheckBox("Capitalize Entries")
-        self.capitalize_chk.setChecked(False)
-        self.controls_layout.addWidget(self.capitalize_chk)
-
-        self.layout.addLayout(self.controls_layout)
-
-        # Second row: name indexing options, create button, entry count
-        self.name_options_layout = QHBoxLayout()
-
-        self.name_indexing_chk = QCheckBox("Name Indexing")
-        self.name_indexing_chk.setChecked(False)
-        self.name_options_layout.addWidget(self.name_indexing_chk)
-
-        self.bold_indexing_chk = QCheckBox("Index Bold Text")
-        self.bold_indexing_chk.setChecked(False)
-        self.name_options_layout.addWidget(self.bold_indexing_chk)
-
-        self.index_italic_chk = QCheckBox("Index Italic")
-        self.index_italic_chk.setChecked(True)
-        self.name_options_layout.addWidget(self.index_italic_chk)
-
-        self.surname_first_chk = QCheckBox("Surname first")
-        self.surname_first_chk.setChecked(False)
-        self.surname_first_chk.setEnabled(False)
-        self.name_options_layout.addWidget(self.surname_first_chk)
-        self.name_indexing_chk.toggled.connect(self.surname_first_chk.setEnabled)
-
-        self.separate_style_files_chk = QCheckBox("Separate index files by style")
-        self.separate_style_files_chk.setChecked(True)
-        self.name_options_layout.addWidget(self.separate_style_files_chk)
-
-        self.create_btn = QPushButton("Create Index")
-        self.create_btn.clicked.connect(self.create_index_requested.emit)
-        self.name_options_layout.addWidget(self.create_btn)
-
+        # Entry count label sits above the tab bar.
+        count_row = QHBoxLayout()
+        count_row.setContentsMargins(0, 0, 0, 0)
         self.entry_count_label = QLabel("")
-        self.name_options_layout.addWidget(self.entry_count_label)
-
-        self.layout.addLayout(self.name_options_layout)
+        self.entry_count_label.setStyleSheet("color: #666;")
+        count_row.addStretch()
+        count_row.addWidget(self.entry_count_label)
+        self.layout.addLayout(count_row)
 
         # Output Area
         self.output_layout = QVBoxLayout()
@@ -316,11 +255,23 @@ class ControlsOutput(QWidget):
             return
 
         self.search_input.setVisible(True)
-        if self.separate_style_files_chk.isChecked():
+        # Style selector visibility is driven by the sidebar's
+        # separate_style_files_chk; the controller toggles it via
+        # set_style_selector_visible() when that checkbox changes or when
+        # the active tab changes.
+        if getattr(self, "_style_selector_enabled", True):
             self.style_selector_bar.setVisible(True)
         self._raw_content = content
         self._raw_format = format_type
         self._apply_filter()
+
+    def set_style_selector_enabled(self, enabled: bool):
+        """Called by the controller when the sidebar's
+        'Separate index files by style' checkbox changes.
+        """
+        self._style_selector_enabled = bool(enabled)
+        if not enabled:
+            self.style_selector_bar.setVisible(False)
 
     def _render_content(self, content, format_type):
         self.output_text.setVisible(True)
@@ -430,19 +381,6 @@ class ControlsOutput(QWidget):
         self._update_cloud_hint()
         self.cloud_submode_changed.emit(self.get_cloud_submode())
 
-    def _on_offset_changed(self, value):
-        """Enable front-matter related controls only when offset is negative."""
-        self.index_from_offset_chk.setEnabled(value < 0)
-        self.index_front_matter_chk.setEnabled(
-            value < 0 and self.index_from_offset_chk.isChecked()
-        )
-
-    def get_strategy(self):
-        return "physical" if self.radio_physical.isChecked() else "logical"
-
-    def get_offset(self):
-        return self.offset_spin.value()
-
     def get_view_mode(self):
         idx = self.view_tabs.currentIndex()
         return TAB_MODES[idx] if 0 <= idx < len(TAB_MODES) else "markdown"
@@ -515,16 +453,9 @@ class ControlsOutput(QWidget):
             self.active_link_clicked.emit(fragment)
              
     def set_state(self, config):
-        # Set Strategy
-        if config.get("strategy") == "physical":
-            self.radio_physical.setChecked(True)
-        else:
-            self.radio_logical.setChecked(True)
-            
-        # Set Offset (triggers _on_offset_changed → updates enabled state)
-        self.offset_spin.setValue(config.get("offset", 0))
-        self.index_from_offset_chk.setChecked(config.get("index_from_offset", True))
-
+        """Restore output-area state (the view tab, source toggle, and the
+        style selector). Indexing settings live on SettingsSidebar.
+        """
         # Set View Mode (migrate legacy "index_cloud" to "tag_cloud")
         mode = config.get("view_mode", "markdown")
         if mode == "index_cloud":
@@ -533,15 +464,7 @@ class ControlsOutput(QWidget):
             self.view_tabs.setCurrentIndex(TAB_MODES.index(mode))
         else:
             self.view_tabs.setCurrentIndex(0)
-            
-        # Set Options
-        self.capitalize_chk.setChecked(config.get("capitalize", False))
-        self.name_indexing_chk.setChecked(config.get("name_indexing", False))
-        self.bold_indexing_chk.setChecked(config.get("bold_indexing", False))
-        self.index_italic_chk.setChecked(config.get("index_italic", True))
-        self.separate_style_files_chk.setChecked(config.get("separate_style_files", True))
-        self.surname_first_chk.setChecked(config.get("surname_first", False))
-        self.index_front_matter_chk.setChecked(config.get("index_front_matter_roman", True))
+
         self.view_source_chk.setChecked(config.get("view_source", False))
         mode_view = config.get("style_view", "aggregate")
         btn = {

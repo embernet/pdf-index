@@ -1170,12 +1170,22 @@ def format_name_entry(name: str, name_type: Optional[str] = None) -> str:
 
 
 def _suppress_covered_components(raw_results: dict) -> None:
-    """Remove pages from single-word entries that are already covered by a
-    compound entry containing that word.
+    """Drop a single-word entry entirely when EVERY page it appears on is
+    also covered by a compound entry that contains that word.
 
-    Example: if "Hall, Baronial" covers p.10 then p.10 is removed from the
-    standalone "Hall" entry; if Hall has no remaining pages it is deleted.
-    This is applied in-place.
+    The intent is to merge "shortened references": if Beatrice Halloway is
+    indexed on pages {1, 2} and Beatrice appears only on those same pages,
+    the standalone Beatrice entry is dropped because each occurrence sits
+    near the full name and is the same person. But if Beatrice were to
+    also appear on page 5 with no Beatrice Halloway nearby, the standalone
+    is kept intact (all pages preserved) — the bare first name is acting
+    as an independent reference there.
+
+    The previous behaviour was to remove only the *covered pages* and
+    leave the rest, which silently dropped pages where the standalone was
+    a deliberate independent mention adjacent to a compound (e.g.
+    "Manchester as its own entry, separate from Manchester Free Trade
+    Hall"). Treating coverage as all-or-nothing avoids that.
     """
     compound_coverage: dict[str, set] = {}  # compound key → set of page indices
     for key, pages in raw_results.items():
@@ -1190,18 +1200,18 @@ def _suppress_covered_components(raw_results: dict) -> None:
         if " " in key or "," in key:
             continue
         key_lower = key.lower()
-        covered: set = set()
+        covering_pages: set = set()
         for compound, page_indices in compound_coverage.items():
-            # Split compound display key into its component words
             compound_words = {w.lower() for w in re.split(r'[\s,]+', compound) if w}
             if key_lower in compound_words:
-                covered |= page_indices
-        if covered:
-            remaining = [p for p in raw_results[key] if p[0] not in covered]
-            if remaining:
-                raw_results[key] = remaining
-            else:
-                del raw_results[key]
+                covering_pages |= page_indices
+        if not covering_pages:
+            continue
+        standalone_pages = {p[0] for p in raw_results[key]}
+        if standalone_pages.issubset(covering_pages):
+            # Every standalone page has a compound covering it — drop entry.
+            del raw_results[key]
+        # Else: at least one standalone page is independent, keep entry intact.
 
 
 # ---------------------------------------------------------------------------
@@ -1216,7 +1226,8 @@ class NameIndexingThread(QThread):
     def __init__(self, pdf_path, page_numbering_strategy, offset=0,
                  include_bold=False, exclude_words=None, stopwords=None,
                  name_type_overrides=None, start_page=0, surname_first=False,
-                 index_italic=True, index_front_matter=False):
+                 index_italic=True, index_capitalised=True,
+                 index_front_matter=False):
         super().__init__()
         self.pdf_path = pdf_path
         self.strategy = page_numbering_strategy
@@ -1229,6 +1240,7 @@ class NameIndexingThread(QThread):
         self._surname_first = surname_first
         self._is_running = True
         self.index_italic = index_italic
+        self.index_capitalised = index_capitalised
         self.index_front_matter = index_front_matter
 
     def run(self):
@@ -1259,16 +1271,18 @@ class NameIndexingThread(QThread):
                 page = doc.load_page(i)
                 page_texts.append(page.get_text("text"))
                 tokens = extract_styled_tokens(page)
-                raw_named = extract_names_from_tokens(
-                    tokens, discovery_mode=True,
-                    include_bold=self.include_bold,
-                    exclude_words=self.exclude_words,
-                    stopwords=self.stopwords,
-                )
-                # raw_named is List[Tuple[str, dict]]; vocabulary only needs strings
-                raw_names = [n for n, _flags in raw_named]
-                names = filter_names(raw_names)
-                name_vocabulary.update(names)
+
+                if self.index_capitalised:
+                    raw_named = extract_names_from_tokens(
+                        tokens, discovery_mode=True,
+                        include_bold=self.include_bold,
+                        exclude_words=self.exclude_words,
+                        stopwords=self.stopwords,
+                    )
+                    # raw_named is List[Tuple[str, dict]]; vocab only needs strings.
+                    raw_names = [n for n, _flags in raw_named]
+                    names = filter_names(raw_names)
+                    name_vocabulary.update(names)
 
                 if self.index_italic:
                     italic_raw = extract_italic_phrases(tokens)
@@ -1416,9 +1430,14 @@ class NameIndexingThread(QThread):
                 else:
                     raw_results[display_key] = deduped
 
-            # Suppress single-word entries whose pages are fully covered by
-            # compound entries that contain that word (e.g. "Hall" vs "Hall, Baronial")
-            _suppress_covered_components(raw_results)
+            # Auto-suppression of single-word entries that are covered by
+            # compound entries was previously applied here. It removed
+            # legitimately independent mentions (e.g. "Manchester" being
+            # discussed alongside "Manchester Free Trade Hall") and was
+            # too aggressive overall. The merge tool exists for the user
+            # to consolidate variants manually; the PDF viewer's proximity
+            # highlighter shows when a bare first/last name belongs with
+            # a compound entry on the same page even when both are kept.
 
             self.progress_updated.emit(85)
 

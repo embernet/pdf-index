@@ -11,6 +11,7 @@ class ConfigManager:
         "view_source": False,
         "fit_page": True,
         "name_indexing": True,
+        "index_capitalised": True,
         "bold_indexing": False,
         "index_from_offset": True,
         "surname_first": False,

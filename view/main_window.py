@@ -15,6 +15,7 @@ from view.proper_names_editor import ProperNamesEditor
 from view.pdf_viewer import PDFViewer
 from view.controls_output import ControlsOutput
 from view.collapsible_panel import CollapsiblePanel
+from view.settings_sidebar import SettingsSidebar
 from version import __version__
 
 
@@ -53,6 +54,15 @@ class MainWindow(QMainWindow):
         self.progress_bar.setFixedWidth(200)
         self.progress_bar.setFixedHeight(16)
         header_layout.addWidget(self.progress_bar)
+
+        # Settings cog button — toggles the right-hand settings sidebar.
+        self.settings_toggle_btn = QPushButton("⚙")
+        self.settings_toggle_btn.setFlat(True)
+        self.settings_toggle_btn.setFixedSize(28, 24)
+        self.settings_toggle_btn.setToolTip("Show/hide Settings")
+        self.settings_toggle_btn.setStyleSheet("font-size: 16px;")
+        self.settings_toggle_btn.clicked.connect(self._toggle_settings)
+        header_layout.addWidget(self.settings_toggle_btn)
 
         header_widget = QWidget()
         header_widget.setLayout(header_layout)
@@ -95,6 +105,7 @@ class MainWindow(QMainWindow):
 
         self.pdf_viewer = PDFViewer()
         self.controls_output = ControlsOutput()
+        self.settings_sidebar = SettingsSidebar()
 
         # Allow the user to drag the PDF pane much wider by setting
         # small minimum widths on the flanking panes.
@@ -142,13 +153,15 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.left_pane)
         self.splitter.addWidget(self.pdf_viewer)
         self.splitter.addWidget(self.controls_output)
+        self.splitter.addWidget(self.settings_sidebar)
         self.splitter.addWidget(self.help_widget)
 
-        # Set stretch factors (approx 20%, 50%, 30%)
+        # Set stretch factors (left, pdf, output, settings, help)
         self.splitter.setStretchFactor(0, 2)
         self.splitter.setStretchFactor(1, 5)
         self.splitter.setStretchFactor(2, 3)
-        self.splitter.setStretchFactor(3, 6)
+        self.splitter.setStretchFactor(3, 2)
+        self.splitter.setStretchFactor(4, 6)
 
         # Menu Bar
         self.menu_bar = self.menuBar()
@@ -195,6 +208,9 @@ class MainWindow(QMainWindow):
 
     def _close_help(self):
         self.help_widget.setVisible(False)
+
+    def _toggle_settings(self):
+        self.settings_sidebar.setVisible(not self.settings_sidebar.isVisible())
 
     # ------------------------------------------------------------------
     # Collapsible panel management (max 2 open at once)

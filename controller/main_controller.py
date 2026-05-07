@@ -45,27 +45,31 @@ class MainController:
         self.view.pdf_viewer.add_keyword_requested.connect(self.add_keyword_from_selection)
         
         # Controls & Output
-        self.view.controls_output.create_index_requested.connect(self.start_indexing)
+        self.view.settings_sidebar.create_index_requested.connect(self.start_indexing)
         # View tab toggles + Active View + Capitalize
         self.view.controls_output.view_tabs.currentChanged.connect(self.update_output_display)
         self.view.controls_output.view_source_chk.toggled.connect(self.update_output_display)
-        self.view.controls_output.capitalize_chk.toggled.connect(self.update_output_display_toggle)
+        self.view.settings_sidebar.capitalize_chk.toggled.connect(self.update_output_display_toggle)
         
         # Autosave UI changes
-        self.view.controls_output.radio_physical.toggled.connect(lambda: self.save_current_config())
-        self.view.controls_output.radio_logical.toggled.connect(lambda: self.save_current_config())
-        self.view.controls_output.offset_spin.valueChanged.connect(lambda: self.save_current_config())
-        self.view.controls_output.index_from_offset_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.radio_physical.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.radio_logical.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.offset_spin.valueChanged.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.index_from_offset_chk.toggled.connect(lambda: self.save_current_config())
         self.view.pdf_viewer.fit_page_chk.toggled.connect(lambda: self.save_current_config())
-        self.view.controls_output.name_indexing_chk.toggled.connect(lambda: self.save_current_config())
-        self.view.controls_output.bold_indexing_chk.toggled.connect(lambda: self.save_current_config())
-        self.view.controls_output.surname_first_chk.toggled.connect(lambda: self.save_current_config())
-        self.view.controls_output.index_italic_chk.toggled.connect(lambda: self.save_current_config())
-        self.view.controls_output.separate_style_files_chk.toggled.connect(lambda: self.save_current_config())
-        self.view.controls_output.separate_style_files_chk.toggled.connect(
+        self.view.settings_sidebar.name_indexing_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.bold_indexing_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.surname_first_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.index_italic_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.separate_style_files_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.separate_style_files_chk.toggled.connect(
+            lambda checked: self.view.controls_output.set_style_selector_enabled(checked)
+        )
+        self.view.settings_sidebar.separate_style_files_chk.toggled.connect(
             lambda: self.update_output_display()
         )
-        self.view.controls_output.index_front_matter_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.index_capitalised_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.index_front_matter_chk.toggled.connect(lambda: self.save_current_config())
 
         # Exclude Editor
         self.view.exclude_editor.save_requested.connect(self.save_excludes)
@@ -159,6 +163,10 @@ class MainController:
         
         # Set UI State
         self.view.controls_output.set_state(config)
+        self.view.settings_sidebar.set_state(config)
+        self.view.controls_output.set_style_selector_enabled(
+            self.view.settings_sidebar.separate_style_files_chk.isChecked()
+        )
         self.view.pdf_viewer.set_fit_page(config.get("fit_page", config.get("fit_width", True)))
         self.view.pdf_viewer.highlight_indexed_chk.setChecked(config.get("highlight_indexed", True))
         
@@ -208,34 +216,31 @@ class MainController:
     def save_current_config(self):
         if not self.project_path:
             return
-            
+
         ctrl = self.view.controls_output
+        sidebar = self.view.settings_sidebar
         viewer = self.view.pdf_viewer
-        
-        strat = ctrl.get_strategy()
-        offset = ctrl.get_offset()
-        
-        mode = ctrl.get_view_mode()
-        
+
         config = {
             "pdf_filename": os.path.basename(self.current_pdf_path) if self.current_pdf_path else None,
-            "strategy": strat,
-            "offset": offset,
-            "view_mode": mode,
-            "capitalize": ctrl.capitalize_chk.isChecked(),
+            "strategy": sidebar.get_strategy(),
+            "offset": sidebar.get_offset(),
+            "view_mode": ctrl.get_view_mode(),
+            "capitalize": sidebar.capitalize_chk.isChecked(),
             "view_source": ctrl.view_source_chk.isChecked(),
             "fit_page": viewer.fit_page_chk.isChecked(),
-            "name_indexing": ctrl.name_indexing_chk.isChecked(),
-            "bold_indexing": ctrl.bold_indexing_chk.isChecked(),
+            "name_indexing": sidebar.name_indexing_chk.isChecked(),
+            "index_capitalised": sidebar.index_capitalised_chk.isChecked(),
+            "bold_indexing": sidebar.bold_indexing_chk.isChecked(),
             "highlight_indexed": viewer.highlight_indexed_chk.isChecked(),
-            "index_from_offset": ctrl.index_from_offset_chk.isChecked(),
-            "surname_first": ctrl.surname_first_chk.isChecked(),
-            "index_italic": ctrl.index_italic_chk.isChecked(),
-            "separate_style_files": ctrl.separate_style_files_chk.isChecked(),
-            "index_front_matter_roman": ctrl.index_front_matter_chk.isChecked(),
+            "index_from_offset": sidebar.index_from_offset_chk.isChecked(),
+            "surname_first": sidebar.surname_first_chk.isChecked(),
+            "index_italic": sidebar.index_italic_chk.isChecked(),
+            "separate_style_files": sidebar.separate_style_files_chk.isChecked(),
+            "index_front_matter_roman": sidebar.index_front_matter_chk.isChecked(),
             "style_view": ctrl.get_style_view(),
         }
-        
+
         from model.config import ConfigManager
         ConfigManager.save_config(self.project_path, config)
 
@@ -561,25 +566,26 @@ class MainController:
             return
 
         keywords = self.view.keyword_editor.get_keywords()
-        name_indexing_enabled = self.view.controls_output.name_indexing_chk.isChecked()
+        name_indexing_enabled = self.view.settings_sidebar.name_indexing_chk.isChecked()
         has_keywords = bool([k for k in keywords if k.strip()])
 
         if not has_keywords and not name_indexing_enabled:
             self.view.show_error("No keywords defined and name indexing is off.")
             return
 
-        strategy = self.view.controls_output.get_strategy()
-        offset = self.view.controls_output.get_offset()
+        strategy = self.view.settings_sidebar.get_strategy()
+        offset = self.view.settings_sidebar.get_offset()
         index_from_offset = (
-            self.view.controls_output.index_from_offset_chk.isChecked()
-            and self.view.controls_output.index_from_offset_chk.isEnabled()
+            self.view.settings_sidebar.index_from_offset_chk.isChecked()
+            and self.view.settings_sidebar.index_from_offset_chk.isEnabled()
         )
         start_page = abs(offset) if (index_from_offset and offset < 0) else 0
 
-        index_front_matter = self.view.controls_output.index_front_matter_chk.isChecked()
-        index_italic = self.view.controls_output.index_italic_chk.isChecked()
+        index_front_matter = self.view.settings_sidebar.index_front_matter_chk.isChecked()
+        index_italic = self.view.settings_sidebar.index_italic_chk.isChecked()
+        index_capitalised = self.view.settings_sidebar.index_capitalised_chk.isChecked()
 
-        self.view.controls_output.create_btn.setEnabled(False)
+        self.view.settings_sidebar.create_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         self.view.show_progress("Creating index...")
 
@@ -606,20 +612,22 @@ class MainController:
 
         # Start name indexing (if enabled)
         if name_indexing_enabled:
-            bold_enabled = self.view.controls_output.bold_indexing_chk.isChecked()
+            bold_enabled = self.view.settings_sidebar.bold_indexing_chk.isChecked()
             exclude_words = {w.lower() for w in self.view.exclude_editor.get_words()}
             # Always include DEFAULT_STOPWORDS so that newly added
             # defaults take effect even if the user's stopwords.txt
             # was created from an older version.
             stopwords = DEFAULT_STOPWORDS | {w.lower() for w in self.view.stopwords_editor.get_words()}
 
-            surname_first = self.view.controls_output.surname_first_chk.isChecked()
+            surname_first = self.view.settings_sidebar.surname_first_chk.isChecked()
             self.name_indexing_thread = NameIndexingThread(
                 self.current_pdf_path, strategy, offset,
                 include_bold=bold_enabled, exclude_words=exclude_words,
                 stopwords=stopwords, name_type_overrides=self._name_type_overrides,
                 start_page=start_page, surname_first=surname_first,
-                index_italic=index_italic, index_front_matter=index_front_matter,
+                index_italic=index_italic,
+                index_capitalised=index_capitalised,
+                index_front_matter=index_front_matter,
             )
             self.name_indexing_thread.progress_updated.connect(
                 self.view.set_progress
@@ -633,7 +641,7 @@ class MainController:
     def on_indexing_error(self, message):
         QApplication.restoreOverrideCursor()
         self.view.show_error(f"Indexing failed: {message}")
-        self.view.controls_output.create_btn.setEnabled(True)
+        self.view.settings_sidebar.create_btn.setEnabled(True)
         self.view.hide_progress()
 
     def _on_keyword_indexing_finished(self, formatted_results, raw_results):
@@ -677,14 +685,12 @@ class MainController:
                 else:
                     merged_raw[key] = list(pages)
 
-        # Suppress single-word entries whose pages are fully covered by a
-        # compound entry containing that word (e.g. keyword "Hall" vs name "Hall, Baronial")
-        from model.name_indexer import _suppress_covered_components
-        _suppress_covered_components(merged_raw)
+        # Auto-suppression of single-word entries was removed; see the
+        # comment in model.name_indexer.NameIndexingThread.run.
 
         QApplication.restoreOverrideCursor()
         self.view.hide_progress()
-        self.view.controls_output.create_btn.setEnabled(True)
+        self.view.settings_sidebar.create_btn.setEnabled(True)
         self.last_raw_results = merged_raw
         self._last_report_sections = None
         # Apply any saved user merges (e.g. "Paul" → "Smith, Paul")
@@ -706,12 +712,12 @@ class MainController:
         if not self.last_raw_results:
             return
 
-        capitalize = self.view.controls_output.capitalize_chk.isChecked()
+        capitalize = self.view.settings_sidebar.capitalize_chk.isChecked()
         bucket = self.view.controls_output.get_style_view()
 
         from model.indexer import filter_by_style
         if (bucket != "aggregate"
-                and self.view.controls_output.separate_style_files_chk.isChecked()):
+                and self.view.settings_sidebar.separate_style_files_chk.isChecked()):
             view_raw = filter_by_style(self.last_raw_results, bucket)
         else:
             view_raw = self.last_raw_results
@@ -752,14 +758,14 @@ class MainController:
             with open(base + ".json", 'w', encoding='utf-8') as f:
                 json.dump(self.last_raw_results, f, indent=2)
 
-        separate = self.view.controls_output.separate_style_files_chk.isChecked()
+        separate = self.view.settings_sidebar.separate_style_files_chk.isChecked()
         style_files = ["italic", "bold", "caps", "other"]
         for bucket in style_files:
             path_base = os.path.join(self.project_path, f"index-{bucket}")
             if separate and self.last_raw_results is not None:
                 from model.indexer import filter_by_style
                 filtered_raw = filter_by_style(self.last_raw_results, bucket)
-                capitalize = self.view.controls_output.capitalize_chk.isChecked()
+                capitalize = self.view.settings_sidebar.capitalize_chk.isChecked()
                 filtered_formatted = IndexingThread.process_results(
                     None, filtered_raw, capitalize_keys=capitalize,
                 )
@@ -1262,7 +1268,7 @@ class MainController:
         if not raw_results:
             return ""
 
-        capitalize = self.view.controls_output.capitalize_chk.isChecked()
+        capitalize = self.view.settings_sidebar.capitalize_chk.isChecked()
         sorted_keys = sorted(raw_results.keys(), key=lambda x: x.lower())
 
         count = len(sorted_keys)

@@ -36,6 +36,7 @@ EXPECTED = {
     "Alistair Pemberton":              set(),
     "Anthony Burgess":                 set(),
     "BBC":                             {"caps"},
+    "Beatrice":                        set(),       # standalone references on page 1
     "Beatrice Halloway":               set(),
     "Bertrand":                        set(),
     "Bridgewater Hall":                set(),
@@ -44,14 +45,16 @@ EXPECTED = {
     "Cloudcatcher Fells":              {"italic"},
     "col legno":                       {"italic"},
     "Concerto for Orchestra":          {"italic"},
+    "Crawley":                         set(),       # in "Crawley and Halloway" example
     "Cygnus":                          set(),
     "Echoes of the Bridgewater Hall":  {"italic"},
-    "Edmund Crawley":                  set(),
+    "Edmund Crawley":                  {"bold"},    # bolded once in chapter intro
     "Halle Choir":                     set(),
     "Halle Orchestra":                 set(),
+    "Halloway":                        set(),       # in "Crawley and Halloway" example
     "in vino veritas":                 {"italic"},
     "John McCabe":                     set(),
-    "Manchester":                      set(),
+    "Manchester":                      set(),       # appears on page 1 AND page 3
     "Manchester Free Trade Hall":      set(),
     # pandoc smart-quotes converts ' to U+2019 in the PDF; match that.
     "Margaret O’Donnell":         set(),
@@ -169,6 +172,7 @@ def run_name_indexer(pdf_path: Path, project: Path) -> bool:
         start_page=0,
         surname_first=False,
         index_italic=True,
+        index_capitalised=True,
         index_front_matter=False,
     )
 
@@ -355,18 +359,8 @@ def main():
         bucket_results.append((bucket, sorted(found, key=str.lower),
                                sorted(missing_in_file, key=str.lower), None))
 
-    # 4. Bold file must be empty (no bold styling in the corpus).
-    bold_path = project / "index-bold.md"
-    if bold_path.exists():
-        bold_entries = parse_md_entries(bold_path)
-        if bold_entries:
-            failures.append(
-                f"  index-bold.md should be empty but contains: "
-                f"{sorted(bold_entries, key=str.lower)}"
-            )
-            failed += 1
-        else:
-            passed += 1
+    # (Bold file is no longer required to be empty — the test corpus now
+    # contains a few bolded names so the bold bucket is exercised.)
 
     # 5. Extras (informational only).
     expected_or_forbidden = set(EXPECTED) | FORBIDDEN
