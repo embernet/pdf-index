@@ -477,48 +477,91 @@ class PDFViewer(QWidget):
                 self.highlight_term(highlight_term)
             self.page_changed.emit(self.current_page_index)
 
+    def _search_variants(self, term):
+        """Return list of word-tuples to try matching for *term*.
+
+        For "Smith, John" we also try the natural-order "John Smith".
+        """
+        import unicodedata
+        term_normalized = unicodedata.normalize("NFKC", term)
+        variants = [term_normalized.split()]
+        if ", " in term_normalized:
+            parts = term_normalized.split(", ", 1)
+            variants.append((parts[1] + " " + parts[0]).split())
+        return variants
+
+    def _match_term_at(self, words, start_idx, target_words):
+        """Try to match *target_words* against *words* starting at *start_idx*.
+
+        Each target word is matched against either a single PDF word or a
+        hyphenation-joined pair (PDF word ending in '-' followed by a PDF
+        word starting with a lowercase letter — the same rule the indexer
+        applies to reconstruct line-break-split words like 'Manch-' +
+        'ester' = 'Manchester'.
+
+        Returns the list of PDF-word indices consumed by the match, or
+        None if no match is possible.
+        """
+        import unicodedata
+        matched = []
+        pdf_pos = start_idx
+
+        for target_word in target_words:
+            if pdf_pos >= len(words):
+                return None
+
+            target_stripped = target_word.strip('.,;:!?()[]{}"\'-/')
+
+            word_text = unicodedata.normalize("NFKC", words[pdf_pos][4])
+            word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
+
+            if self._words_equal(word_stripped, target_stripped):
+                matched.append(pdf_pos)
+                pdf_pos += 1
+                continue
+
+            # Hyphenation join: '<prev>-' + '<next>' where next starts lowercase.
+            if (pdf_pos + 1 < len(words)
+                    and word_text.endswith("-")
+                    and words[pdf_pos + 1][4]
+                    and words[pdf_pos + 1][4][0].islower()):
+                joined = (word_text[:-1]
+                          + unicodedata.normalize("NFKC", words[pdf_pos + 1][4]))
+                joined_stripped = joined.strip('.,;:!?()[]{}"\'-/')
+                if self._words_equal(joined_stripped, target_stripped):
+                    matched.append(pdf_pos)
+                    matched.append(pdf_pos + 1)
+                    pdf_pos += 2
+                    continue
+
+            return None
+
+        return matched
+
+    @staticmethod
+    def _words_equal(pdf_word, target_word):
+        """Case-aware word equality: an uppercase target requires an
+        uppercase PDF word, otherwise we compare case-insensitively.
+        """
+        if target_word and target_word[0].isupper():
+            if not pdf_word or not pdf_word[0].isupper():
+                return False
+        return pdf_word.lower() == target_word.lower()
+
     def highlight_term(self, term):
         """Highlight all occurrences of term on the current page."""
-        import unicodedata
-
         words = self.image_label.words
         if not words or not term:
             return
 
-        term_normalized = unicodedata.normalize("NFKC", term)
-
-        # Build search variants: original term + reversed "Last, First" → "First Last"
-        search_variants = [term_normalized.split()]
-        if ", " in term_normalized:
-            parts = term_normalized.split(", ", 1)
-            reversed_term = parts[1] + " " + parts[0]
-            search_variants.append(reversed_term.split())
-
         indices = set()
-
-        for term_words in search_variants:
+        for term_words in self._search_variants(term):
             if not term_words:
                 continue
-            n = len(term_words)
-            for i in range(len(words) - n + 1):
-                match = True
-                for j in range(n):
-                    word_text = unicodedata.normalize("NFKC", words[i + j][4])
-                    # Strip punctuation for matching
-                    word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
-                    target_stripped = term_words[j].strip('.,;:!?()[]{}"\'-/')
-                    # Case-aware: if indexed term word starts uppercase,
-                    # the PDF word must also start uppercase.
-                    if target_stripped and target_stripped[0].isupper():
-                        if not word_stripped or not word_stripped[0].isupper():
-                            match = False
-                            break
-                    if word_stripped.lower() != target_stripped.lower():
-                        match = False
-                        break
-                if match:
-                    for idx in range(i, i + n):
-                        indices.add(idx)
+            for i in range(len(words)):
+                matched = self._match_term_at(words, i, term_words)
+                if matched is not None:
+                    indices.update(matched)
 
         self.image_label.set_highlights(sorted(indices))
 
@@ -663,8 +706,6 @@ class PDFViewer(QWidget):
 
     def highlight_multiple_terms(self, terms):
         """Highlight all occurrences of multiple terms on the current page."""
-        import unicodedata
-
         words = self.image_label.words
         if not words or not terms:
             self.image_label.set_highlights([])
@@ -674,36 +715,13 @@ class PDFViewer(QWidget):
         term_map = {}  # word_index -> original term string
 
         for term in terms:
-            term_normalized = unicodedata.normalize("NFKC", term)
-
-            # Build search variants: original + reversed "Last, First" -> "First Last"
-            search_variants = [term_normalized.split()]
-            if ", " in term_normalized:
-                parts = term_normalized.split(", ", 1)
-                reversed_term = parts[1] + " " + parts[0]
-                search_variants.append(reversed_term.split())
-
-            for term_words in search_variants:
+            for term_words in self._search_variants(term):
                 if not term_words:
                     continue
-                n = len(term_words)
-                for i in range(len(words) - n + 1):
-                    match = True
-                    for j in range(n):
-                        word_text = unicodedata.normalize("NFKC", words[i + j][4])
-                        word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
-                        target_stripped = term_words[j].strip('.,;:!?()[]{}"\'-/')
-                        # Case-aware: if indexed term word starts uppercase,
-                        # the PDF word must also start uppercase.
-                        if target_stripped and target_stripped[0].isupper():
-                            if not word_stripped or not word_stripped[0].isupper():
-                                match = False
-                                break
-                        if word_stripped.lower() != target_stripped.lower():
-                            match = False
-                            break
-                    if match:
-                        for idx in range(i, i + n):
+                for i in range(len(words)):
+                    matched = self._match_term_at(words, i, term_words)
+                    if matched is not None:
+                        for idx in matched:
                             all_indices.add(idx)
                             term_map[idx] = term
 
@@ -718,19 +736,9 @@ class PDFViewer(QWidget):
         are skipped so that, e.g., clicking "Sound" does not also accent-
         highlight the "Sound" inside "Sound of Music".
         """
-        import unicodedata
-
         words = self.image_label.words
         if not words or not term:
             return
-
-        term_normalized = unicodedata.normalize("NFKC", term)
-
-        search_variants = [term_normalized.split()]
-        if ", " in term_normalized:
-            parts = term_normalized.split(", ", 1)
-            reversed_term = parts[1] + " " + parts[0]
-            search_variants.append(reversed_term.split())
 
         # term_map maps word-index → owning term (set by
         # highlight_multiple_terms).  If a word position already belongs to
@@ -739,37 +747,20 @@ class PDFViewer(QWidget):
         term_lower = term.lower()
 
         indices = []
-        for term_words in search_variants:
+        for term_words in self._search_variants(term):
             if not term_words:
                 continue
-            n = len(term_words)
-            for i in range(len(words) - n + 1):
-                match = True
-                for j in range(n):
-                    word_text = unicodedata.normalize("NFKC", words[i + j][4])
-                    word_stripped = word_text.strip('.,;:!?()[]{}"\'-/')
-                    target_stripped = term_words[j].strip('.,;:!?()[]{}"\'-/')
-                    # Case-aware: if indexed term word starts uppercase,
-                    # the PDF word must also start uppercase.
-                    if target_stripped and target_stripped[0].isupper():
-                        if not word_stripped or not word_stripped[0].isupper():
-                            match = False
-                            break
-                    if word_stripped.lower() != target_stripped.lower():
-                        match = False
-                        break
-                if match:
-                    # Check that these word positions aren't owned by a
-                    # different (longer) indexed term.
-                    owned_by_other = False
-                    for idx in range(i, i + n):
-                        owner = term_map.get(idx, '')
-                        if owner and owner.lower() != term_lower:
-                            owned_by_other = True
-                            break
-                    if not owned_by_other:
-                        for idx in range(i, i + n):
-                            indices.append(idx)
+            for i in range(len(words)):
+                matched = self._match_term_at(words, i, term_words)
+                if matched is None:
+                    continue
+                owned_by_other = any(
+                    (term_map.get(idx, '')
+                     and term_map.get(idx, '').lower() != term_lower)
+                    for idx in matched
+                )
+                if not owned_by_other:
+                    indices.extend(matched)
 
         self.image_label.set_accent_highlights(indices)
 
