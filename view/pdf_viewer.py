@@ -134,6 +134,44 @@ class ClickableLabel(QLabel):
         
         return " ".join(text_parts)
 
+    def _merge_indices_into_spans(self, indices, term_map):
+        """Group sorted word indices into contiguous spans where each span
+        is (a) consecutive indices, (b) sharing the same owning term in
+        *term_map*, and (c) sitting on the same line (matching y-coord).
+        Returns a list of lists of word indices.
+        """
+        sorted_idx = sorted(set(indices))
+        spans = []
+        current = []
+        for i in sorted_idx:
+            if not current:
+                current = [i]
+                continue
+            prev = current[-1]
+            same_term = (term_map.get(i) == term_map.get(prev))
+            same_line = abs(self.words[i][1] - self.words[prev][1]) < 1.0
+            consecutive = (i == prev + 1)
+            if same_term and same_line and consecutive:
+                current.append(i)
+            else:
+                spans.append(current)
+                current = [i]
+        if current:
+            spans.append(current)
+        return spans
+
+    def _draw_span_rect(self, painter, span, x_off, y_off):
+        """Draw a single rect covering all words in *span*, including the
+        spaces between them.
+        """
+        first = self.words[span[0]]
+        last = self.words[span[-1]]
+        x = first[0] * self.current_zoom + x_off
+        y = min(self.words[i][1] for i in span) * self.current_zoom + y_off
+        right = last[2] * self.current_zoom + x_off
+        bottom = max(self.words[i][3] for i in span) * self.current_zoom + y_off
+        painter.drawRect(QRectF(x, y, right - x, bottom - y))
+
     def paintEvent(self, event):
         super().paintEvent(event)
 
@@ -146,32 +184,31 @@ class ClickableLabel(QLabel):
 
         painter = QPainter(self)
 
-        # Draw yellow highlights (search term matches)
+        # Draw yellow highlights (search term matches). Merge consecutive
+        # word indices that belong to the same indexed term and sit on the
+        # same line into a single rect — this fills the inter-word spaces
+        # so a multi-word term like "Beatrice Halloway" reads as one
+        # continuous highlight rather than two adjacent boxes.
         accent_set = set(self.accent_indices)
         if self.highlight_indices:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(255, 255, 0, 100))
-            for i in self.highlight_indices:
-                if i in accent_set:
-                    continue  # drawn separately in orange
-                w = self.words[i]
-                x = w[0] * self.current_zoom + x_off
-                y = w[1] * self.current_zoom + y_off
-                w_curr = (w[2] - w[0]) * self.current_zoom
-                h_curr = (w[3] - w[1]) * self.current_zoom
-                painter.drawRect(QRectF(x, y, w_curr, h_curr))
+            spans = self._merge_indices_into_spans(
+                [i for i in self.highlight_indices if i not in accent_set],
+                self.highlight_term_map,
+            )
+            for span in spans:
+                self._draw_span_rect(painter, span, x_off, y_off)
 
-        # Draw orange accent highlights (focused term from index click)
+        # Draw orange accent highlights (focused term from index click).
         if self.accent_indices:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(255, 140, 0, 140))
-            for i in self.accent_indices:
-                w = self.words[i]
-                x = w[0] * self.current_zoom + x_off
-                y = w[1] * self.current_zoom + y_off
-                w_curr = (w[2] - w[0]) * self.current_zoom
-                h_curr = (w[3] - w[1]) * self.current_zoom
-                painter.drawRect(QRectF(x, y, w_curr, h_curr))
+            spans = self._merge_indices_into_spans(
+                self.accent_indices, self.highlight_term_map,
+            )
+            for span in spans:
+                self._draw_span_rect(painter, span, x_off, y_off)
 
         # Draw search result highlights (light cyan)
         if self.search_rects:
@@ -739,6 +776,12 @@ class PDFViewer(QWidget):
 
         # Pass 1: direct matches for each indexed term.
         multi_word_owners = {}  # word -> term that contains this word
+        # Stop-word and title-prefix constituents that should NOT trigger
+        # proximity highlighting on their own (e.g. "The" inside "The
+        # Guardian" should not light up every "the" or "THE" on the page).
+        from model.name_indexer import DEFAULT_STOPWORDS, TITLE_PREFIXES
+        skip_constituents = DEFAULT_STOPWORDS | TITLE_PREFIXES
+
         for term in terms:
             for term_words in self._search_variants(term):
                 if not term_words:
@@ -750,11 +793,16 @@ class PDFViewer(QWidget):
                             all_indices.add(idx)
                             term_map[idx] = term
                 # Record constituent words from any multi-word variant for
-                # the proximity pass below.
+                # the proximity pass below. Skip stop words and title
+                # prefixes since they appear ubiquitously on a page and
+                # would highlight themselves indiscriminately.
                 if len(term_words) > 1:
                     for w in term_words:
-                        if w and w[0].isupper():
-                            multi_word_owners.setdefault(w, term)
+                        if not w or not w[0].isupper():
+                            continue
+                        if w.lower() in skip_constituents:
+                            continue
+                        multi_word_owners.setdefault(w, term)
 
         # Pass 2: proximity highlights — for any constituent capitalised
         # word of a multi-word term that's been matched on the page, also

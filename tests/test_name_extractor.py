@@ -99,3 +99,42 @@ def test_extract_italic_keeps_stop_word_in_phrase():
     tokens = _tokens("the polonaise", italic=True)
     out = extract_italic_phrases(tokens)
     assert "the polonaise" in out
+
+
+def _bold_tokens(text: str):
+    """Like _tokens but with bold styling instead of italic."""
+    out = []
+    for word in text.split():
+        is_caps = word.isupper() and len(word) > 1
+        out.append(StyledToken(
+            text=word,
+            is_bold=True,
+            is_italic=False,
+            is_superscript=False,
+            is_all_caps=is_caps,
+            from_all_caps_line=False,
+        ))
+    return out
+
+
+def test_extract_bold_phrase_captures_multi_word_run():
+    from model.name_indexer import extract_bold_phrases
+    # "A note on proximity" entirely bold — captured as one phrase even
+    # though it starts with a stop word.
+    tokens = _bold_tokens("A note on proximity")
+    out = extract_bold_phrases(tokens)
+    assert "A note on proximity" in out
+
+
+def test_extract_bold_phrase_drops_lone_stop_word():
+    from model.name_indexer import extract_bold_phrases
+    tokens = _bold_tokens("the")
+    out = extract_bold_phrases(tokens)
+    assert out == []
+
+
+def test_extract_bold_phrase_skips_non_bold():
+    from model.name_indexer import extract_bold_phrases
+    tokens = _tokens("plain text only", italic=False)
+    out = extract_bold_phrases(tokens)
+    assert out == []

@@ -31,6 +31,7 @@ from pathlib import Path
 
 EXPECTED = {
     "A Clockwork Orange":              {"italic"},
+    "A note on proximity":             {"bold"},
     "Absinthe":                        {"italic"},
     "Adam Gorb":                       set(),
     "Alistair Pemberton":              set(),
@@ -48,6 +49,8 @@ EXPECTED = {
     "Crawley":                         set(),       # in "Crawley and Halloway" example
     "Cygnus":                          set(),
     "Echoes of the Bridgewater Hall":  {"italic"},
+    # Commas are skipped during phrase capture so the entry text omits them.
+    "An index she felt was the most generous thing a writer could leave behind": {"bold"},
     "Edmund Crawley":                  {"bold"},    # bolded once in chapter intro
     "Halle Choir":                     set(),
     "Halle Orchestra":                 set(),
@@ -165,7 +168,7 @@ def run_name_indexer(pdf_path: Path, project: Path) -> bool:
         str(pdf_path),
         "logical",
         0,
-        include_bold=False,
+        include_bold=True,
         exclude_words=set(),
         stopwords=DEFAULT_STOPWORDS,
         name_type_overrides={},

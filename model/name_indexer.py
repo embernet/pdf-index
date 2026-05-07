@@ -63,6 +63,12 @@ TITLE_PREFIXES = {
 # Sentence-ending punctuation characters.
 SENTENCE_END_CHARS = {'.', '?', '!'}
 
+# Punctuation that flushes an italic/bold phrase run. Includes terminal
+# punctuation but not commas, parentheses, or dashes — those appear
+# naturally inside long bolded or italicised passages and should not
+# fragment the captured phrase.
+TERMINAL_PUNCT_CHARS = set('.?!;:')
+
 # Default stopwords – common English words that should never appear as
 # standalone entries in a name index.  They may still appear as PART of a
 # multi-word name (e.g. "The Guardian", "The Hague") but will never start
@@ -728,6 +734,83 @@ def extract_names_from_tokens(
     return names
 
 
+def extract_bold_phrases(tokens: List[StyledToken]) -> List[str]:
+    """Walk *tokens* and emit runs of bold-styled tokens as phrases.
+
+    Mirrors extract_italic_phrases but is more permissive about word
+    membership. Bold annotations are typically body emphasis (e.g.
+    '**A note on proximity**' inside the prose) rather than structural
+    headings, so the STRUCTURAL_WORDS filter that the italic pass uses
+    is dropped here — words like 'note', 'index', 'see' should not
+    break a bold run when used in their everyday sense.
+
+    A bold run is broken by punctuation, by the bold flag turning off,
+    by footnote references, by roman numerals, and by number-like
+    tokens. Title prefixes (Dr, Mr, Mrs, Sir, ...) are skipped without
+    breaking the run. Lone single-token runs that are just stop words
+    are dropped on flush.
+
+    Used when the 'Index Bold Text' option is on, so that a bold
+    annotation like '**A note on proximity**' becomes its own entry
+    rather than only contributing flag information to capitalised words.
+    """
+    phrases: List[str] = []
+    current: List[str] = []
+
+    def flush():
+        if current:
+            if len(current) == 1 and current[0].lower() in DEFAULT_STOPWORDS:
+                current.clear()
+                return
+            phrases.append(" ".join(current))
+            current.clear()
+
+    for token in tokens:
+        word = token.text.strip()
+        if not word:
+            continue
+
+        if not token.is_bold:
+            flush()
+            continue
+
+        # Skip whole all-caps lines (chapter headings rendered in bold).
+        if token.from_all_caps_line:
+            flush()
+            continue
+
+        if token.is_superscript and _is_footnote_ref(word):
+            flush()
+            continue
+
+        if _is_punctuation(word):
+            # Only terminal punctuation breaks the run; commas, parens,
+            # and dashes stay inside.
+            if any(ch in TERMINAL_PUNCT_CHARS for ch in word):
+                flush()
+            continue
+
+        word = _strip_possessive(word)
+        if not word:
+            continue
+
+        if word.lower().rstrip('.') in TITLE_PREFIXES:
+            continue
+
+        if _is_roman_numeral(word):
+            flush()
+            continue
+
+        if _is_number_like(word):
+            flush()
+            continue
+
+        current.append(word)
+
+    flush()
+    return phrases
+
+
 def extract_italic_phrases(tokens: List[StyledToken]) -> List[str]:
     """Walk *tokens* and emit runs of italic-styled tokens as phrases.
 
@@ -771,12 +854,20 @@ def extract_italic_phrases(tokens: List[StyledToken]) -> List[str]:
             flush()
             continue
 
+        # Skip whole all-caps lines (e.g. an italic-styled chapter heading).
+        if token.from_all_caps_line:
+            flush()
+            continue
+
         if token.is_superscript and _is_footnote_ref(word):
             flush()
             continue
 
         if _is_punctuation(word):
-            flush()
+            # Only terminal punctuation breaks the run; commas, parens,
+            # and dashes stay inside.
+            if any(ch in TERMINAL_PUNCT_CHARS for ch in word):
+                flush()
             continue
 
         word = _strip_possessive(word)
@@ -1289,6 +1380,11 @@ class NameIndexingThread(QThread):
                     italic_clean = filter_names(italic_raw)
                     name_vocabulary.update(italic_clean)
 
+                if self.include_bold:
+                    bold_raw = extract_bold_phrases(tokens)
+                    bold_clean = filter_names(bold_raw)
+                    name_vocabulary.update(bold_clean)
+
                 progress = int((loop_idx + 1) / max(indexable, 1) * 30)
                 self.progress_updated.emit(progress)
 
@@ -1377,6 +1473,18 @@ class NameIndexingThread(QThread):
                             )
                         else:
                             seen_flags_by_name[phrase] = italic_flags
+
+                if self.include_bold:
+                    bold_phrases = extract_bold_phrases(tokens)
+                    bold_clean = filter_names(bold_phrases)
+                    for phrase in bold_clean:
+                        bold_flags = {"italic": False, "bold": True, "caps": False}
+                        if phrase in seen_flags_by_name:
+                            seen_flags_by_name[phrase] = merge_flags(
+                                seen_flags_by_name[phrase], bold_flags,
+                            )
+                        else:
+                            seen_flags_by_name[phrase] = bold_flags
 
                 for name, flags in seen_flags_by_name.items():
                     all_occurrences[name].append((i, page_label, flags))

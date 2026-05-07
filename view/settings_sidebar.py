@@ -36,6 +36,28 @@ class SettingsSidebar(QWidget):
         outer.addWidget(header)
         outer.addWidget(self._sep())
 
+        # Create Index button — pinned at the top of the sidebar so the
+        # primary action is always one click away regardless of which
+        # section the user is scrolled to.
+        top_button_row = QWidget()
+        top_button_layout = QHBoxLayout()
+        top_button_layout.setContentsMargins(10, 8, 10, 8)
+        top_button_row.setLayout(top_button_layout)
+        self.create_btn = QPushButton("Create Index")
+        self.create_btn.setStyleSheet(
+            "QPushButton { background: #b3d9ff; border: 1px solid #6fa8dc; "
+            "border-radius: 4px; padding: 8px 16px; font-weight: bold; "
+            "color: #1a1a1a; }"
+            "QPushButton:hover { background: #c4e1ff; }"
+            "QPushButton:pressed { background: #9bc7f0; }"
+            "QPushButton:disabled { background: #e0e0e0; color: #888; "
+            "border-color: #ccc; }"
+        )
+        self.create_btn.clicked.connect(self.create_index_requested.emit)
+        top_button_layout.addWidget(self.create_btn)
+        outer.addWidget(top_button_row)
+        outer.addWidget(self._sep())
+
         # Scrollable body
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -127,15 +149,6 @@ class SettingsSidebar(QWidget):
         layout.addWidget(self.separate_style_files_chk)
 
         layout.addStretch(1)
-
-        # ---- Create button at the bottom of the sidebar -------------------
-        button_row = QHBoxLayout()
-        button_row.setContentsMargins(0, 8, 0, 0)
-        self.create_btn = QPushButton("Create Index")
-        self.create_btn.setStyleSheet("font-weight: bold; padding: 6px;")
-        self.create_btn.clicked.connect(self.create_index_requested.emit)
-        button_row.addWidget(self.create_btn)
-        layout.addLayout(button_row)
 
         # Wiring
         self.offset_spin.valueChanged.connect(self._on_offset_changed)
