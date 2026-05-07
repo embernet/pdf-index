@@ -41,3 +41,4 @@ test/config.json
 test/excludes.txt
 test/stopwords.txt
 test/name_types.json
+test/keywords.txt
