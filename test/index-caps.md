@@ -1,5 +1,0 @@
-# Index (3 entries)
-
-**BBC**: 1-2  
-**CERN**: 2  
-**NATO**: 2  
