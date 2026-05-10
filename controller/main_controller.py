@@ -61,6 +61,7 @@ class MainController:
         self.view.settings_sidebar.bold_indexing_chk.toggled.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.surname_first_chk.toggled.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.index_italic_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.index_single_quotes_chk.toggled.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.separate_style_files_chk.toggled.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.separate_style_files_chk.toggled.connect(
             lambda checked: self.view.controls_output.set_style_selector_enabled(checked)
@@ -236,6 +237,7 @@ class MainController:
             "index_from_offset": sidebar.index_from_offset_chk.isChecked(),
             "surname_first": sidebar.surname_first_chk.isChecked(),
             "index_italic": sidebar.index_italic_chk.isChecked(),
+            "index_single_quotes": sidebar.index_single_quotes_chk.isChecked(),
             "separate_style_files": sidebar.separate_style_files_chk.isChecked(),
             "index_front_matter_roman": sidebar.index_front_matter_chk.isChecked(),
             "style_view": ctrl.get_style_view(),
@@ -584,6 +586,7 @@ class MainController:
         index_front_matter = self.view.settings_sidebar.index_front_matter_chk.isChecked()
         index_italic = self.view.settings_sidebar.index_italic_chk.isChecked()
         index_capitalised = self.view.settings_sidebar.index_capitalised_chk.isChecked()
+        index_single_quotes = self.view.settings_sidebar.index_single_quotes_chk.isChecked()
 
         self.view.settings_sidebar.create_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -627,6 +630,7 @@ class MainController:
                 start_page=start_page, surname_first=surname_first,
                 index_italic=index_italic,
                 index_capitalised=index_capitalised,
+                index_single_quotes=index_single_quotes,
                 index_front_matter=index_front_matter,
             )
             self.name_indexing_thread.progress_updated.connect(
@@ -775,8 +779,15 @@ class MainController:
             with open(base + ".json", 'w', encoding='utf-8') as f:
                 json.dump(self.last_raw_results, f, indent=2)
 
+        # Aggregate index with per-entry rule indicators.
+        if self.last_raw_results is not None:
+            capitalize = self.view.settings_sidebar.capitalize_chk.isChecked()
+            rules_text = self.generate_rules_text(self.last_raw_results, capitalize)
+            with open(base + "-rules.txt", 'w', encoding='utf-8') as f:
+                f.write(rules_text)
+
         separate = self.view.settings_sidebar.separate_style_files_chk.isChecked()
-        style_files = ["italic", "bold", "caps", "other"]
+        style_files = ["italic", "bold", "caps", "single-quotes", "other"]
         for bucket in style_files:
             path_base = os.path.join(self.project_path, f"index-{bucket}")
             if separate and self.last_raw_results is not None:
@@ -1280,6 +1291,78 @@ class MainController:
             lines.append(f"<div><b>{kw}</b> {pages}</div>")
         lines.append("</body></html>")
         return "\n".join(lines)
+
+    def generate_rules_text(self, raw_results, capitalize):
+        """Plain-text aggregate index with per-entry rule indicators.
+
+        Each line reads:  <term> [rule1] [rule2] ... <pages>
+
+        The rules are derived from the occurrence flag dicts: an entry
+        gets a rule indicator if at least one of its occurrences was
+        flagged with that style (italic / bold / single-quotes), or had
+        the caps flag set (NATO-style acronym), or had no style flags at
+        all (the default capitalised n-gram path produced it).
+        """
+        formatted = IndexingThread.process_results(
+            None, raw_results, capitalize_keys=capitalize,
+        )
+        # Map display keys (post-capitalize) back to original keys so we
+        # can look up occurrences for rule derivation.
+        if capitalize:
+            display_to_original = {}
+            for k in raw_results:
+                disp = k[0].upper() + k[1:] if k else k
+                display_to_original[disp] = k
+        else:
+            display_to_original = {k: k for k in raw_results}
+
+        count = len(formatted)
+        lines = [f"Index ({count} entries) — with rule indicators\n"]
+        for display_kw, pages in formatted.items():
+            original_kw = display_to_original.get(display_kw, display_kw)
+            rules = self._derive_rules(raw_results.get(original_kw, []))
+            indicator_str = " ".join(f"[{r}]" for r in rules)
+            if indicator_str:
+                lines.append(f"{display_kw} {indicator_str} {pages}")
+            else:
+                lines.append(f"{display_kw} {pages}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _derive_rules(occurrences):
+        """Return the ordered list of rule indicators (italic, bold,
+        single-quotes, capitals) that produced any of the given
+        occurrences. The order is fixed so output is stable.
+        """
+        italic = bold = single_quotes = caps_flag = plain = False
+        for occ in occurrences:
+            if len(occ) < 3 or not isinstance(occ[2], dict):
+                plain = True
+                continue
+            f = occ[2]
+            if f.get("italic"):
+                italic = True
+            if f.get("bold"):
+                bold = True
+            if f.get("single-quotes"):
+                single_quotes = True
+            if f.get("caps"):
+                caps_flag = True
+            if not (
+                f.get("italic") or f.get("bold")
+                or f.get("single-quotes") or f.get("caps")
+            ):
+                plain = True
+        rules = []
+        if italic:
+            rules.append("italic")
+        if bold:
+            rules.append("bold")
+        if single_quotes:
+            rules.append("single-quotes")
+        if caps_flag or plain:
+            rules.append("capitals")
+        return rules
 
     def _generate_active_html_for(self, raw_results):
         if not raw_results:

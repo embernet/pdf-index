@@ -140,6 +140,63 @@ def test_extract_bold_phrase_skips_non_bold():
     assert out == []
 
 
+def _quote_token(text):
+    """Build a single-character punctuation token for a curly quote."""
+    return StyledToken(
+        text=text, is_bold=False, is_italic=False, is_superscript=False,
+        is_all_caps=False, from_all_caps_line=False,
+    )
+
+
+def test_extract_quoted_captures_phrase_between_curly_quotes():
+    from model.name_indexer import extract_quoted_phrases
+    # 'A New Method' wrapped in matched curly single quotes.
+    tokens = (
+        _tokens("Beatrice labelled it", italic=False)
+        + [_quote_token("‘")]
+        + _tokens("A New Method", italic=False)
+        + [_quote_token("’")]
+        + _tokens("today", italic=False)
+    )
+    out = extract_quoted_phrases(tokens)
+    assert "A New Method" in out
+
+
+def test_extract_quoted_does_not_capture_outside_quotes():
+    from model.name_indexer import extract_quoted_phrases
+    tokens = _tokens("just plain prose with no quotes", italic=False)
+    out = extract_quoted_phrases(tokens)
+    assert out == []
+
+
+def test_extract_quoted_does_not_split_on_apostrophe_inside_word():
+    from model.name_indexer import extract_quoted_phrases
+    # "O’Donnell" is one token with a curly apostrophe; the quoted run
+    # should NOT end on it because the closing-quote token must appear
+    # standalone to terminate the run.
+    tokens = (
+        [_quote_token("‘")]
+        + [StyledToken(text="O’Donnell", is_bold=False, is_italic=False,
+                       is_superscript=False, is_all_caps=False,
+                       from_all_caps_line=False)]
+        + _tokens("Method", italic=False)
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert "O’Donnell Method" in out
+
+
+def test_extract_quoted_drops_lone_stop_word():
+    from model.name_indexer import extract_quoted_phrases
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("the", italic=False)
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert out == []
+
+
 def test_styled_bypass_single_word_dropped():
     """A single capitalised word admitted via the styled-bypass at
     sentence-start (italic 'Piano' alone) is dropped on flush. Without

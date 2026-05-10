@@ -31,6 +31,7 @@ from pathlib import Path
 
 EXPECTED = {
     "A Clockwork Orange":              {"italic"},
+    "A New Method":                    {"single-quotes"},
     "A note on proximity":             {"bold"},
     "Absinthe":                        {"italic"},
     "Adam Gorb":                       set(),
@@ -52,6 +53,7 @@ EXPECTED = {
     # Commas are skipped during phrase capture so the entry text omits them.
     "An index she felt was the most generous thing a writer could leave behind": {"bold"},
     "Edmund Crawley":                  {"bold"},    # bolded once in chapter intro
+    "Final Final Draft":               {"single-quotes"},
     "Halle Choir":                     set(),
     "Halle Orchestra":                 set(),
     "Halloway":                        set(),       # in "Crawley and Halloway" example
@@ -124,7 +126,13 @@ def expected_per_bucket():
     (italic / bold / caps), and additionally in the "other" bucket only if
     its expected flags are empty.
     """
-    buckets = {"italic": set(), "bold": set(), "caps": set(), "other": set()}
+    buckets = {
+        "italic": set(),
+        "bold": set(),
+        "caps": set(),
+        "single-quotes": set(),
+        "other": set(),
+    }
     for entry, flags in EXPECTED.items():
         if not flags:
             buckets["other"].add(entry)
@@ -176,6 +184,7 @@ def run_name_indexer(pdf_path: Path, project: Path) -> bool:
         surname_first=False,
         index_italic=True,
         index_capitalised=True,
+        index_single_quotes=True,
         index_front_matter=False,
     )
 
@@ -202,13 +211,64 @@ def run_name_indexer(pdf_path: Path, project: Path) -> bool:
     formatted = IndexingThread.process_results(None, captured)
     _write_format_files(base, formatted)
 
-    for bucket in ("italic", "bold", "caps", "other"):
+    # Aggregate rules-tagged text alongside index.txt.
+    rules_text = _generate_rules_text(captured)
+    with open(str(base) + "-rules.txt", "w", encoding="utf-8") as f:
+        f.write(rules_text)
+
+    for bucket in ("italic", "bold", "caps", "single-quotes", "other"):
         filtered_raw = filter_by_style(captured, bucket)
         filtered_formatted = IndexingThread.process_results(None, filtered_raw)
         _write_format_files(project / f"index-{bucket}", filtered_formatted)
 
     print(f"  wrote index.json with {len(captured)} entries")
     return True
+
+
+def _generate_rules_text(raw_results: dict) -> str:
+    """Mirror MainController.generate_rules_text for the headless test path."""
+    from model.indexer import IndexingThread
+    formatted = IndexingThread.process_results(None, raw_results)
+    count = len(formatted)
+    lines = [f"Index ({count} entries) — with rule indicators\n"]
+    for kw in formatted:
+        rules = _derive_rules_for(raw_results.get(kw, []))
+        indicator = " ".join(f"[{r}]" for r in rules)
+        if indicator:
+            lines.append(f"{kw} {indicator} {formatted[kw]}")
+        else:
+            lines.append(f"{kw} {formatted[kw]}")
+    return "\n".join(lines)
+
+
+def _derive_rules_for(occurrences):
+    italic = bold = sq = caps_flag = plain = False
+    for occ in occurrences:
+        if len(occ) < 3 or not isinstance(occ[2], dict):
+            plain = True
+            continue
+        f = occ[2]
+        if f.get("italic"):
+            italic = True
+        if f.get("bold"):
+            bold = True
+        if f.get("single-quotes"):
+            sq = True
+        if f.get("caps"):
+            caps_flag = True
+        if not (f.get("italic") or f.get("bold")
+                or f.get("single-quotes") or f.get("caps")):
+            plain = True
+    rules = []
+    if italic:
+        rules.append("italic")
+    if bold:
+        rules.append("bold")
+    if sq:
+        rules.append("single-quotes")
+    if caps_flag or plain:
+        rules.append("capitals")
+    return rules
 
 
 def _write_format_files(path_base: Path, results: dict) -> None:

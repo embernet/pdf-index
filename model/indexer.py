@@ -61,11 +61,22 @@ def label_for_page(page, physical_page_number: int, strategy: str,
     return str(physical_page_number + offset)
 
 
-EMPTY_FLAGS = {"italic": False, "bold": False, "caps": False}
+EMPTY_FLAGS = {
+    "italic": False,
+    "bold": False,
+    "caps": False,
+    "single-quotes": False,
+}
 
 
-def make_flags(italic: bool = False, bold: bool = False, caps: bool = False) -> dict:
-    return {"italic": italic, "bold": bold, "caps": caps}
+def make_flags(italic: bool = False, bold: bool = False, caps: bool = False,
+               single_quotes: bool = False) -> dict:
+    return {
+        "italic": italic,
+        "bold": bold,
+        "caps": caps,
+        "single-quotes": single_quotes,
+    }
 
 
 def merge_flags(a: dict, b: dict) -> dict:
@@ -74,6 +85,9 @@ def merge_flags(a: dict, b: dict) -> dict:
         "italic": a.get("italic", False) or b.get("italic", False),
         "bold": a.get("bold", False) or b.get("bold", False),
         "caps": a.get("caps", False) or b.get("caps", False),
+        "single-quotes": (
+            a.get("single-quotes", False) or b.get("single-quotes", False)
+        ),
     }
 
 
@@ -92,6 +106,7 @@ def normalise_occurrence(occ) -> tuple:
                 "italic": bool(flags.get("italic", False)),
                 "bold": bool(flags.get("bold", False)),
                 "caps": bool(flags.get("caps", False)),
+                "single-quotes": bool(flags.get("single-quotes", False)),
             }
         return (idx, label, flags)
     if len(occ) == 2:
@@ -171,7 +186,13 @@ def find_keyword_flags_in_tokens(tokens, keyword: str):
     return flags
 
 
-STYLE_BUCKETS = ("aggregate", "italic", "bold", "caps", "other")
+STYLE_BUCKETS = (
+    "aggregate", "italic", "bold", "caps", "single-quotes", "other",
+)
+# Style buckets that have a corresponding flag key in the occurrence flag
+# dict. "aggregate" is a passthrough; "other" matches occurrences whose
+# style flags are all False.
+_STYLE_FLAG_KEYS = ("italic", "bold", "caps", "single-quotes")
 
 
 def filter_by_style(raw_results: dict, bucket: str) -> dict:
@@ -179,7 +200,8 @@ def filter_by_style(raw_results: dict, bucket: str) -> dict:
 
     bucket must be one of STYLE_BUCKETS.
     - "aggregate": returns raw_results unchanged.
-    - "italic" / "bold" / "caps": keep only occurrences whose flag is True.
+    - "italic" / "bold" / "caps" / "single-quotes": keep only occurrences
+      whose flag is True.
     - "other": keep only occurrences whose flags are all False.
 
     Entries with no matching occurrences are omitted from the result.
@@ -196,7 +218,7 @@ def filter_by_style(raw_results: dict, bucket: str) -> dict:
             occ = normalise_occurrence(occ)
             flags = occ[2]
             if bucket == "other":
-                if not (flags["italic"] or flags["bold"] or flags["caps"]):
+                if not any(flags.get(k, False) for k in _STYLE_FLAG_KEYS):
                     kept.append(occ)
             else:
                 if flags.get(bucket, False):

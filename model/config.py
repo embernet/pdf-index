@@ -13,6 +13,7 @@ class ConfigManager:
         "name_indexing": True,
         "index_capitalised": True,
         "bold_indexing": False,
+        "index_single_quotes": True,
         "index_from_offset": True,
         "surname_first": False,
         "index_italic": True,

@@ -20,7 +20,13 @@ Define keywords in the Keywords panel (one per line). The entire PDF is searched
 
 **Index Italic** — capture italic phrases as separate index entries, even when they are not capitalised (e.g., italic book titles or foreign-language phrases). Default on.
 
-**Separate index files by style** — when on, generates `index-italic`, `index-bold`, `index-caps`, and `index-other` files alongside the aggregate `index` files. Each per-style file lists only entries (and only the page numbers) that matched that style. The aggregate `index.json` carries every flag and is the source of truth — the per-style markdown/text/html files are derived from it on each save. A radio bar above the index output (`Aggregate | Italic | Bold | Caps | Other`) lets you view any single bucket in the Active / Markdown / Text / HTML tabs; reports, the merge tool, and the tag cloud always operate on the aggregate.
+**Index Bold Text** — capture bold phrases as separate index entries (parallel to italic capture). Bold-styled words also bypass the sentence-initial filter for capitalised n-grams. Default off.
+
+**Index Single Quotes** — capture phrases enclosed in matched single curly quotes (`‘…’`) as separate index entries. The opening curly `‘` starts a run; the closing curly `’` ends it. Apostrophes inside individual word tokens (e.g. `Pemberton’s`, `O’Donnell`) do NOT close the run because the rule only fires when `’` appears as a standalone punctuation token between word tokens. Default on.
+
+**Separate index files by style** — when on, generates `index-italic`, `index-bold`, `index-caps`, `index-single-quotes`, and `index-other` files alongside the aggregate `index` files. Each per-style file lists only entries (and only the page numbers) that matched that style. The aggregate `index.json` carries every flag and is the source of truth — the per-style markdown/text/html files are derived from it on each save. A radio bar above the index output (`Aggregate | Italic | Bold | Caps | Single Quotes | Other`) lets you view any single bucket in the Active / Markdown / Text / HTML tabs; reports, the merge tool, and the tag cloud always operate on the aggregate.
+
+**Aggregate index with rule indicators** — `index-rules.txt` is written alongside the other format files. It lists every entry with the rules that produced it tagged in square brackets after the term: `Beatrice Halloway [capitals] 1, 2`, `Piano [italic] 3`, `A New Method [single-quotes] 2`, `Edmund Crawley [bold] [capitals] 1, 2, 3`. The rule names are *italic*, *bold*, *single-quotes*, and *capitals*; an entry gets *capitals* if any of its occurrences was a plain capitalised n-gram or an all-caps acronym (NATO-style).
 
 **Index front matter (roman)** — when offset is negative and *Index only from offset* is on, this option also indexes the front-matter pages (1 .. offset) using lowercase roman numerals (i, ii, iii, ...). The PDF's own page label is used when it is itself roman; otherwise the physical page number is converted. Default on.
 
@@ -52,6 +58,8 @@ The following rules govern how word sequences are assembled into candidate names
 | **Title prefixes** | *Dr, Mr, Mrs, Ms, Prof, Rev, St, Sir, Dame, Lord, Lady, Hon, Sr, Jr* — skipped but do **not** break the sequence. "Dr John Smith" yields "John Smith". |
 | **Connector words** | *and, of, to, from, in, by, …* normally break the sequence. **Exception:** an italic connector inside an entirely italic sequence is kept, so "The Sound of Music" or "War and Peace" (set in italics) is captured as one term. |
 | **Italic phrases** | Independent of the capitalisation rules: a contiguous run of italic-styled tokens is captured as an index entry, with connectors kept ("The Sound of Music"). Punctuation or a non-italic word ends the run. Each captured entry is tagged with the *italic* style. |
+| **Bold phrases** | Same idea as italic capture: when *Index Bold Text* is on, contiguous runs of bold-styled tokens are captured as their own entries (e.g. a bold annotation like `**A note on proximity**` becomes its own entry). |
+| **Single-quote phrases** | When *Index Single Quotes* is on, text enclosed in matched single curly quotes (`‘…’`) is captured as its own entry, tagged with the *single-quotes* style. Apostrophes inside word tokens (`Pemberton’s`, `O’Donnell`) do not close the run — the rule only fires on a standalone curly `’` between word tokens. |
 | **Style break** | When a token's italic status differs from the rest of the current sequence, the sequence is flushed and a new one begins. For example, if "Adam Gorb's" is in plain text and "Absinthe" is in italics, the result is two separate entries: "Adam Gorb" and "Absinthe". |
 | **All-caps words** | Single all-caps tokens like *NATO* and *CERN* on a mixed-case line are admitted as name candidates and tagged with the *caps* style. Tokens on a fully all-caps line (*INTRODUCTION*, *CHAPTER 3*) are skipped — those are headings. |
 | **Structural words** | *Chapter, Section, Figure, Table, Introduction, Conclusion, Appendix, Index, Note, References, Bibliography, …* always break the sequence. |
@@ -88,7 +96,7 @@ Index files are automatically saved in the project folder when generated.
 - **Reports** — nine index quality reports: similar terms, overlapping entries, capitalisation variants, and more. See the Reports section below.
 - **View Source** — toggle to see the raw markup of any text-based output format.
 - **Filter bar** — type to filter the displayed index entries; shows a filtered/total count.
-- **Style selector** — `Aggregate | Italic | Bold | Caps | Other` radio bar above the index output (visible when *Separate index files by style* is on). Filters the displayed entries to those that have at least one occurrence in the selected style; page numbers within the filtered entries also restrict to that style.
+- **Style selector** — `Aggregate | Italic | Bold | Caps | Single Quotes | Other` radio bar above the index output (visible when *Separate index files by style* is on). Filters the displayed entries to those that have at least one occurrence in the selected style; page numbers within the filtered entries also restrict to that style.
 
 ---
 

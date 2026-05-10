@@ -20,6 +20,8 @@ Connector words gave Cygnus its first real test. In ordinary prose, a phrase lik
 
 Beatrice tested the rule on a footnote. Pemberton had buried the most interesting bit on page xiv of the front matter, in a note that read: see also *in vino veritas*, the Latin proverb cited by Bertrand on the eve of the BBC broadcast. Cygnus picked out *in vino veritas* as an italic phrase even though no word was capitalised. The footnote marker — the tiny superscript digit after the word footnote — was correctly skipped, since digit-only superscript tokens were not real words.
 
+Cygnus also captured short phrases set off in single curly quotes. Beatrice had labelled a working draft 'A New Method' and tagged a rejected version with the tongue-in-cheek note 'Final Final Draft'. Both tags were picked up by the single-quotes rule and indexed as their own entries — the curly quotes acted as the boundary, just like italic styling would.
+
 ## CHAPTER TWO: ACRONYMS AND TITLES
 
 It was Dr Margaret O'Donnell, visiting from CERN that week, who suggested Beatrice add acronyms to the test. You need NATO and CERN and the BBC in there, she said. Run-of-the-mill all-caps, single tokens, mid-sentence. Beatrice obliged. Cygnus admitted them under a careful rule: a single all-caps token sitting on a mixed-case line was a name candidate; an entire line set in capitals was a heading and was discarded.

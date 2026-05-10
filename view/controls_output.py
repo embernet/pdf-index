@@ -200,11 +200,13 @@ class ControlsOutput(QWidget):
         self.style_italic_btn = QRadioButton("Italic")
         self.style_bold_btn = QRadioButton("Bold")
         self.style_caps_btn = QRadioButton("Caps")
+        self.style_single_quotes_btn = QRadioButton("Single Quotes")
         self.style_other_btn = QRadioButton("Other")
         self.style_aggregate_btn.setChecked(True)
 
         for btn in (self.style_aggregate_btn, self.style_italic_btn,
-                    self.style_bold_btn, self.style_caps_btn, self.style_other_btn):
+                    self.style_bold_btn, self.style_caps_btn,
+                    self.style_single_quotes_btn, self.style_other_btn):
             self.style_bg.addButton(btn)
             style_layout.addWidget(btn)
         style_layout.addStretch()
@@ -390,6 +392,8 @@ class ControlsOutput(QWidget):
             return "bold"
         if self.style_caps_btn.isChecked():
             return "caps"
+        if self.style_single_quotes_btn.isChecked():
+            return "single-quotes"
         if self.style_other_btn.isChecked():
             return "other"
         return "aggregate"
@@ -498,6 +502,7 @@ class ControlsOutput(QWidget):
             "italic": self.style_italic_btn,
             "bold": self.style_bold_btn,
             "caps": self.style_caps_btn,
+            "single-quotes": self.style_single_quotes_btn,
             "other": self.style_other_btn,
         }.get(mode_view, self.style_aggregate_btn)
         btn.setChecked(True)

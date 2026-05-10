@@ -182,10 +182,21 @@ NON_PERSON_NAME_WORDS = {
 # Regex for detecting Roman numerals.
 _ROMAN_RE = re.compile(r'^[IVXLCDM]+$')
 
-# Regex to split span text into word tokens and punctuation.
-# Matches: word chars (with internal apostrophes/hyphens, optionally trailing
-# hyphen for line-break hyphenation), OR a single punctuation char.
-_TOKEN_RE = re.compile(r"[\w][\w'\u2019-]*|[^\s\w]", re.UNICODE)
+# Word/punctuation tokenizer.
+#
+# A word starts with \w and may contain internal hyphens, plus internal
+# apostrophes (straight ' or curly U+2019) when the apostrophe is
+# followed by another word character \u2014 so "Pemberton's" / "O'Donnell"
+# stay as single tokens. A TRAILING apostrophe is NOT absorbed into the
+# word; it becomes a standalone punctuation token. That lets the curly
+# U+2019 that closes a 'single-quoted phrase' be detected as the
+# quote-close marker rather than being silently glued onto the last
+# word inside the quotes (e.g. "Method\u2019"). Trailing hyphens stay
+# attached so the line-break hyphenation reconstruction can fire.
+_TOKEN_RE = re.compile(
+    r"[\w](?:[\w-]+|['\u2019](?=\w))*|[^\s\w]",
+    re.UNICODE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +576,7 @@ def extract_names_from_tokens(
 
     names: List[Tuple[str, dict]] = []
     current_ngram: List[str] = []
-    current_flags: dict = {"italic": False, "bold": False, "caps": False}
+    current_flags: dict = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
     current_ngram_italic: Optional[bool] = None  # italic status of the first token in the n-gram
     after_sentence_end = True  # Start of page is effectively a sentence boundary
     # True when this n-gram's FIRST word was admitted via the styled
@@ -592,7 +603,7 @@ def extract_names_from_tokens(
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
                     names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
-                current_flags = {"italic": False, "bold": False, "caps": False}
+                current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
                 started_with_styled_bypass = False
             continue
@@ -603,7 +614,7 @@ def extract_names_from_tokens(
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
                     names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
-                current_flags = {"italic": False, "bold": False, "caps": False}
+                current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
                 started_with_styled_bypass = False
             if word in SENTENCE_END_CHARS:
@@ -638,7 +649,7 @@ def extract_names_from_tokens(
                 if current_ngram:
                     names.append((" ".join(current_ngram), dict(current_flags)))
                     current_ngram = []
-                    current_flags = {"italic": False, "bold": False, "caps": False}
+                    current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                     current_ngram_italic = None
             after_sentence_end = False
             continue
@@ -649,7 +660,7 @@ def extract_names_from_tokens(
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
                     names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
-                current_flags = {"italic": False, "bold": False, "caps": False}
+                current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
                 started_with_styled_bypass = False
             after_sentence_end = False
@@ -664,7 +675,7 @@ def extract_names_from_tokens(
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
                     names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
-                current_flags = {"italic": False, "bold": False, "caps": False}
+                current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
                 started_with_styled_bypass = False
             continue
@@ -679,7 +690,7 @@ def extract_names_from_tokens(
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
                     names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
-                current_flags = {"italic": False, "bold": False, "caps": False}
+                current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
                 started_with_styled_bypass = False
             continue
@@ -708,7 +719,7 @@ def extract_names_from_tokens(
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
                     names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
-                current_flags = {"italic": False, "bold": False, "caps": False}
+                current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
                 started_with_styled_bypass = False
             after_sentence_end = False
@@ -735,7 +746,7 @@ def extract_names_from_tokens(
                         if not (len(current_ngram) == 1 and started_with_styled_bypass):
                             names.append((" ".join(current_ngram), dict(current_flags)))
                         current_ngram = []
-                        current_flags = {"italic": False, "bold": False, "caps": False}
+                        current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                         current_ngram_italic = None
                         started_with_styled_bypass = False
                     continue
@@ -760,7 +771,7 @@ def extract_names_from_tokens(
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
                     names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
-                current_flags = {"italic": False, "bold": False, "caps": False}
+                current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
                 started_with_styled_bypass = False
             continue
@@ -775,7 +786,7 @@ def extract_names_from_tokens(
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
                     names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
-                current_flags = {"italic": False, "bold": False, "caps": False}
+                current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
                 started_with_styled_bypass = False
             if not current_ngram:
@@ -794,7 +805,7 @@ def extract_names_from_tokens(
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
                     names.append((" ".join(current_ngram), dict(current_flags)))
                 current_ngram = []
-                current_flags = {"italic": False, "bold": False, "caps": False}
+                current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
                 started_with_styled_bypass = False
 
@@ -969,6 +980,94 @@ def extract_italic_phrases(tokens: List[StyledToken]) -> List[str]:
     return phrases
 
 
+def extract_quoted_phrases(tokens: List[StyledToken]) -> List[str]:
+    """Walk *tokens* and emit phrases enclosed in single curly quotes
+    (U+2018 ... U+2019).
+
+    The opening curly single-quote (U+2018, ‘) starts a run; the closing
+    curly single-quote (U+2019, ’) ends it. Apostrophes inside individual
+    word tokens (e.g. "O’Donnell") are part of those tokens and do NOT
+    end the run, because the rule only fires when ’ appears as a standalone
+    punctuation token between word tokens.
+
+    Within a quoted run, the same filters as the italic/bold passes apply:
+    structural-word, footnote-ref, roman-numeral, and number-like tokens
+    flush the run; commas/parentheses stay inside; terminal punctuation
+    (.?!;:) flushes; title prefixes (Dr, Mr, ...) are skipped without
+    breaking. Tokens on a fully all-caps line are skipped — a heading
+    rendered with quoted text is unusual but possible.
+
+    A single-token run that is just a stop word is dropped on flush.
+    """
+    phrases: List[str] = []
+    current: List[str] = []
+    in_quote = False
+
+    def flush():
+        if current:
+            if len(current) == 1 and current[0].lower() in DEFAULT_STOPWORDS:
+                current.clear()
+                return
+            phrases.append(" ".join(current))
+            current.clear()
+
+    for token in tokens:
+        word = token.text.strip()
+        if not word:
+            continue
+
+        # Open / close detection. Both curly variants act as paired
+        # delimiters; a stray closing quote without an open is ignored.
+        if word == "‘":
+            flush()
+            in_quote = True
+            continue
+        if word == "’":
+            flush()
+            in_quote = False
+            continue
+
+        if not in_quote:
+            continue
+
+        if token.from_all_caps_line:
+            flush()
+            continue
+
+        if token.is_superscript and _is_footnote_ref(word):
+            flush()
+            continue
+
+        if _is_punctuation(word):
+            if any(ch in TERMINAL_PUNCT_CHARS for ch in word):
+                flush()
+            continue
+
+        word = _strip_possessive(word)
+        if not word:
+            continue
+
+        if word.lower() in STRUCTURAL_WORDS:
+            flush()
+            continue
+
+        if word.lower().rstrip('.') in TITLE_PREFIXES:
+            continue
+
+        if _is_roman_numeral(word):
+            flush()
+            continue
+
+        if _is_number_like(word):
+            flush()
+            continue
+
+        current.append(word)
+
+    flush()
+    return phrases
+
+
 # ---------------------------------------------------------------------------
 # Known-name search (pass 2)
 # ---------------------------------------------------------------------------
@@ -1031,7 +1130,7 @@ def find_known_names_in_tokens(
             candidate = " ".join(span)
             canon = known_names_lower.get(candidate.lower())
             if canon is not None:
-                flags = {"italic": False, "bold": False, "caps": False}
+                flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 for fj in word_flags[i:i + length]:
                     if fj is None:
                         continue
@@ -1390,7 +1489,7 @@ class NameIndexingThread(QThread):
                  include_bold=False, exclude_words=None, stopwords=None,
                  name_type_overrides=None, start_page=0, surname_first=False,
                  index_italic=True, index_capitalised=True,
-                 index_front_matter=False):
+                 index_single_quotes=True, index_front_matter=False):
         super().__init__()
         self.pdf_path = pdf_path
         self.strategy = page_numbering_strategy
@@ -1404,6 +1503,7 @@ class NameIndexingThread(QThread):
         self._is_running = True
         self.index_italic = index_italic
         self.index_capitalised = index_capitalised
+        self.index_single_quotes = index_single_quotes
         self.index_front_matter = index_front_matter
 
     def run(self):
@@ -1431,6 +1531,7 @@ class NameIndexingThread(QThread):
             cap_vocab: Set[str] = set()
             italic_vocab: Set[str] = set()
             bold_vocab: Set[str] = set()
+            quoted_vocab: Set[str] = set()
             # For each capitalised-pass observation we record the flag
             # dict so that — after pass 1 finishes — we can decide
             # whether a single-word entry deserves a place in cap_vocab.
@@ -1469,6 +1570,10 @@ class NameIndexingThread(QThread):
                 if self.include_bold:
                     bold_raw = extract_bold_phrases(tokens)
                     bold_vocab.update(filter_names(bold_raw))
+
+                if self.index_single_quotes:
+                    quoted_raw = extract_quoted_phrases(tokens)
+                    quoted_vocab.update(filter_names(quoted_raw))
 
                 progress = int((loop_idx + 1) / max(indexable, 1) * 30)
                 self.progress_updated.emit(progress)
@@ -1516,12 +1621,15 @@ class NameIndexingThread(QThread):
                 cap_vocab = stopword_filter(cap_vocab)
                 italic_vocab = stopword_filter(italic_vocab)
                 bold_vocab = stopword_filter(bold_vocab)
+                quoted_vocab = stopword_filter(quoted_vocab)
 
             # The full vocabulary is the union, used for spaCy
             # classification only. find_known_names_in_tokens uses just
-            # cap_vocab so italic-only and bold-only entries don't match
-            # at non-styled positions.
-            name_vocabulary = cap_vocab | italic_vocab | bold_vocab
+            # cap_vocab so italic-only / bold-only / quoted-only entries
+            # don't match at non-styled positions.
+            name_vocabulary = (
+                cap_vocab | italic_vocab | bold_vocab | quoted_vocab
+            )
 
             if not name_vocabulary:
                 doc.close()
@@ -1585,7 +1693,10 @@ class NameIndexingThread(QThread):
                     italic_phrases = extract_italic_phrases(tokens)
                     italic_clean = filter_names(italic_phrases)
                     for phrase in italic_clean:
-                        italic_flags = {"italic": True, "bold": False, "caps": False}
+                        italic_flags = {
+                            "italic": True, "bold": False,
+                            "caps": False, "single-quotes": False,
+                        }
                         if phrase in seen_flags_by_name:
                             seen_flags_by_name[phrase] = merge_flags(
                                 seen_flags_by_name[phrase], italic_flags,
@@ -1597,13 +1708,31 @@ class NameIndexingThread(QThread):
                     bold_phrases = extract_bold_phrases(tokens)
                     bold_clean = filter_names(bold_phrases)
                     for phrase in bold_clean:
-                        bold_flags = {"italic": False, "bold": True, "caps": False}
+                        bold_flags = {
+                            "italic": False, "bold": True,
+                            "caps": False, "single-quotes": False,
+                        }
                         if phrase in seen_flags_by_name:
                             seen_flags_by_name[phrase] = merge_flags(
                                 seen_flags_by_name[phrase], bold_flags,
                             )
                         else:
                             seen_flags_by_name[phrase] = bold_flags
+
+                if self.index_single_quotes:
+                    quoted_phrases = extract_quoted_phrases(tokens)
+                    quoted_clean = filter_names(quoted_phrases)
+                    for phrase in quoted_clean:
+                        quoted_flags = {
+                            "italic": False, "bold": False,
+                            "caps": False, "single-quotes": True,
+                        }
+                        if phrase in seen_flags_by_name:
+                            seen_flags_by_name[phrase] = merge_flags(
+                                seen_flags_by_name[phrase], quoted_flags,
+                            )
+                        else:
+                            seen_flags_by_name[phrase] = quoted_flags
 
                 for name, flags in seen_flags_by_name.items():
                     all_occurrences[name].append((i, page_label, flags))

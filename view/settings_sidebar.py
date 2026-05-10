@@ -122,6 +122,10 @@ class SettingsSidebar(QWidget):
         self.bold_indexing_chk.setChecked(False)
         layout.addWidget(self.bold_indexing_chk)
 
+        self.index_single_quotes_chk = QCheckBox("Index Single Quotes")
+        self.index_single_quotes_chk.setChecked(True)
+        layout.addWidget(self.index_single_quotes_chk)
+
         self.surname_first_chk = QCheckBox("Surname First")
         self.surname_first_chk.setChecked(False)
         self.surname_first_chk.setEnabled(False)
@@ -132,6 +136,7 @@ class SettingsSidebar(QWidget):
         self.name_indexing_chk.toggled.connect(self.index_capitalised_chk.setEnabled)
         self.name_indexing_chk.toggled.connect(self.index_italic_chk.setEnabled)
         self.name_indexing_chk.toggled.connect(self.bold_indexing_chk.setEnabled)
+        self.name_indexing_chk.toggled.connect(self.index_single_quotes_chk.setEnabled)
 
         layout.addSpacing(8)
         layout.addWidget(self._sep())
@@ -204,6 +209,7 @@ class SettingsSidebar(QWidget):
         self.index_capitalised_chk.setChecked(config.get("index_capitalised", True))
         self.index_italic_chk.setChecked(config.get("index_italic", True))
         self.bold_indexing_chk.setChecked(config.get("bold_indexing", False))
+        self.index_single_quotes_chk.setChecked(config.get("index_single_quotes", True))
         self.surname_first_chk.setChecked(config.get("surname_first", False))
         self.separate_style_files_chk.setChecked(
             config.get("separate_style_files", True)
