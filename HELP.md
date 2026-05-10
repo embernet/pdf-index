@@ -74,6 +74,16 @@ The following rules govern how word sequences are assembled into candidate names
 - **Index Bold Text** — bold-styled words bypass the sentence-initial filter in pass 1, just as italic words do. Useful when the PDF uses bold for names rather than italics.
 - **Surname First** — when enabled, two-word names classified as person names are inverted for display: "John Smith" → "Smith, John". Classification priority is: user override (via right-click) → spaCy NER (if installed) → word-pattern heuristic. Names containing geographic or organisational words are classified as place/thing and kept in natural order. Single-word names and names of three or more words are never inverted.
 
+### Substring-duplicate suppression
+
+After the keyword and name indexes have been merged, an entry whose words form a contiguous sub-sequence of one or more longer entries (case-insensitive) is dropped if every page it appears on is also covered by those longer entries. This catches:
+
+- Greedy-match leftovers — `Fisher` and `Norma Fisher` both ending up with the same page list because the surname was matched both alone and inside the full name.
+- Partial captures — `Chopin Sonata in B-flat` and `Chopin Sonata in B-flat minor` both showing on the same page when the partial form was admitted at one occurrence and the longer form at another.
+- Inverted forms — `Halloway` whose pages are all covered by `Halloway, Beatrice`.
+
+Entries with at least one page **not** covered by any longer match are kept intact. So `Manchester` on pages 1 and 3 alongside `Manchester Free Trade Hall` only on page 3 stays in the index because page 1 has no covering compound.
+
 ### Managing the index
 
 - **Exclude List** — add words here to prevent them from appearing as standalone index entries. Right-click any entry in the Active Index and choose *Exclude* to add it instantly.

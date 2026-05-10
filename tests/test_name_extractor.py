@@ -197,6 +197,78 @@ def test_extract_quoted_drops_lone_stop_word():
     assert out == []
 
 
+def _occ(idx, label="x", flags=None):
+    if flags is None:
+        flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
+    return (idx, label, flags)
+
+
+def test_suppress_substring_duplicates_drops_subset_match():
+    """Fisher pages ⊆ Norma Fisher pages → Fisher dropped."""
+    from model.name_indexer import _suppress_substring_duplicates
+    raw = {
+        "Fisher": [_occ(7), _occ(43), _occ(46)],
+        "Norma Fisher": [_occ(7), _occ(43), _occ(46)],
+    }
+    _suppress_substring_duplicates(raw)
+    assert "Norma Fisher" in raw
+    assert "Fisher" not in raw
+
+
+def test_suppress_substring_duplicates_keeps_partial_overlap():
+    """Manchester appears on a page Manchester Free Trade Hall doesn't —
+    keep the standalone entry intact."""
+    from model.name_indexer import _suppress_substring_duplicates
+    raw = {
+        "Manchester": [_occ(1), _occ(3)],
+        "Manchester Free Trade Hall": [_occ(2), _occ(3)],
+    }
+    _suppress_substring_duplicates(raw)
+    assert "Manchester" in raw
+    assert "Manchester Free Trade Hall" in raw
+
+
+def test_suppress_substring_duplicates_multi_word_substring():
+    """Chopin Sonata in B-flat is a substring of Chopin Sonata in B-flat
+    minor; both on page 196 → shorter dropped.
+    """
+    from model.name_indexer import _suppress_substring_duplicates
+    raw = {
+        "Chopin Sonata in B-flat": [_occ(196)],
+        "Chopin Sonata in B-flat minor": [_occ(196)],
+    }
+    _suppress_substring_duplicates(raw)
+    assert "Chopin Sonata in B-flat minor" in raw
+    assert "Chopin Sonata in B-flat" not in raw
+
+
+def test_suppress_substring_duplicates_union_coverage():
+    """Fisher's pages spread across two longer entries that together
+    cover them all → Fisher is dropped."""
+    from model.name_indexer import _suppress_substring_duplicates
+    raw = {
+        "Fisher": [_occ(1), _occ(5), _occ(10)],
+        "Norma Fisher": [_occ(1), _occ(5)],
+        "Smith Fisher": [_occ(10)],
+    }
+    _suppress_substring_duplicates(raw)
+    assert "Fisher" not in raw
+    assert "Norma Fisher" in raw
+    assert "Smith Fisher" in raw
+
+
+def test_suppress_substring_duplicates_inverted_form():
+    """Halloway pages ⊆ "Halloway, Beatrice" pages → drop the standalone."""
+    from model.name_indexer import _suppress_substring_duplicates
+    raw = {
+        "Halloway": [_occ(1), _occ(2)],
+        "Halloway, Beatrice": [_occ(1), _occ(2), _occ(3)],
+    }
+    _suppress_substring_duplicates(raw)
+    assert "Halloway" not in raw
+    assert "Halloway, Beatrice" in raw
+
+
 def test_styled_bypass_single_word_dropped():
     """A single capitalised word admitted via the styled-bypass at
     sentence-start (italic 'Piano' alone) is dropped on flush. Without

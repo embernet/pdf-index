@@ -689,8 +689,20 @@ class MainController:
                 else:
                     merged_raw[key] = list(pages)
 
-        # Auto-suppression of single-word entries was removed; see the
-        # comment in model.name_indexer.NameIndexingThread.run.
+        # Post-processing: drop entries that are substring duplicates of
+        # longer entries when their pages are entirely covered. This
+        # catches greedy-match leftovers ("Fisher" alongside "Norma
+        # Fisher" with identical page lists) and partial captures
+        # ("Chopin Sonata in B-flat" vs "Chopin Sonata in B-flat minor"
+        # on the same page) without removing legitimately independent
+        # mentions whose pages are NOT a subset of any longer entry.
+        try:
+            from model.name_indexer import _suppress_substring_duplicates
+            _suppress_substring_duplicates(merged_raw)
+        except Exception:
+            import traceback
+            print("error during _suppress_substring_duplicates:")
+            traceback.print_exc()
 
         QApplication.restoreOverrideCursor()
         self.view.hide_progress()

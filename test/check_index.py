@@ -38,7 +38,6 @@ EXPECTED = {
     "Alistair Pemberton":              set(),
     "Anthony Burgess":                 set(),
     "BBC":                             {"caps"},
-    "Beatrice":                        set(),       # standalone references on page 1
     "Beatrice Halloway":               set(),
     "Bertrand":                        set(),
     "Bridgewater Hall":                set(),
@@ -47,7 +46,6 @@ EXPECTED = {
     "Cloudcatcher Fells":              {"italic"},
     "col legno":                       {"italic"},
     "Concerto for Orchestra":          {"italic"},
-    "Crawley":                         set(),       # in "Crawley and Halloway" example
     "Cygnus":                          set(),
     "Echoes of the Bridgewater Hall":  {"italic"},
     # Commas are skipped during phrase capture so the entry text omits them.
@@ -56,7 +54,6 @@ EXPECTED = {
     "Final Final Draft":               {"single-quotes"},
     "Halle Choir":                     set(),
     "Halle Orchestra":                 set(),
-    "Halloway":                        set(),       # in "Crawley and Halloway" example
     "in vino veritas":                 {"italic"},
     "John McCabe":                     set(),
     "Manchester":                      set(),       # appears on page 1 AND page 3
@@ -201,6 +198,15 @@ def run_name_indexer(pdf_path: Path, project: Path) -> bool:
     if not captured:
         print("error: name indexer produced no entries")
         return False
+
+    # Mirror the controller's post-merge substring-duplicate suppression
+    # so the headless test path produces the same on-disk index as the
+    # GUI path would.
+    try:
+        from model.name_indexer import _suppress_substring_duplicates
+        _suppress_substring_duplicates(captured)
+    except ImportError:
+        pass
 
     # Write the aggregate index.json.
     base = project / "index"

@@ -1431,49 +1431,78 @@ def format_name_entry(name: str, name_type: Optional[str] = None) -> str:
     return name
 
 
-def _suppress_covered_components(raw_results: dict) -> None:
-    """Drop a single-word entry entirely when EVERY page it appears on is
-    also covered by a compound entry that contains that word.
+def _entry_words(name: str) -> List[str]:
+    """Split an entry name into words for subsequence comparison.
 
-    The intent is to merge "shortened references": if Beatrice Halloway is
-    indexed on pages {1, 2} and Beatrice appears only on those same pages,
-    the standalone Beatrice entry is dropped because each occurrence sits
-    near the full name and is the same person. But if Beatrice were to
-    also appear on page 5 with no Beatrice Halloway nearby, the standalone
-    is kept intact (all pages preserved) — the bare first name is acting
-    as an independent reference there.
-
-    The previous behaviour was to remove only the *covered pages* and
-    leave the rest, which silently dropped pages where the standalone was
-    a deliberate independent mention adjacent to a compound (e.g.
-    "Manchester as its own entry, separate from Manchester Free Trade
-    Hall"). Treating coverage as all-or-nothing avoids that.
+    Handles whitespace and commas (so "Halloway, Beatrice" → ["Halloway",
+    "Beatrice"]). Returned words are NOT lower-cased — case-insensitive
+    comparisons are done by the caller.
     """
-    compound_coverage: dict[str, set] = {}  # compound key → set of page indices
-    for key, pages in raw_results.items():
-        if " " in key or "," in key:
-            compound_coverage[key] = {p[0] for p in pages}
+    return [w for w in re.split(r'[\s,]+', name) if w]
 
-    if not compound_coverage:
-        return
 
-    for key in list(raw_results.keys()):
-        # Only process single-word entries (no space or comma)
-        if " " in key or "," in key:
+def _suppress_substring_duplicates(raw_results: dict) -> None:
+    """Drop entries that are substring duplicates of longer entries.
+
+    An entry A is treated as a substring duplicate of entries B1, B2, …
+    when A's words form a contiguous sub-sequence of each B's words
+    (case-insensitive) AND every page A appears on is also covered by
+    one of those longer entries. In that case A only ever appears as a
+    sub-form of a longer indexed name and contributes no independent
+    information, so it is dropped.
+
+    Examples this catches:
+
+    - "Fisher" / "Norma Fisher" with identical page lists — the bare
+      surname appears only when the full name appears on the same page,
+      so "Fisher" is removed.
+    - "Chopin Sonata in B-flat" / "Chopin Sonata in B-flat minor" both
+      on page 196 — the partial form is dropped.
+
+    Examples preserved:
+
+    - "Manchester" appearing on pages {1, 3} alongside "Manchester Free
+      Trade Hall" on pages {2, 3} — page 1 of "Manchester" has no
+      covering longer entry, so the standalone is kept intact.
+    - "Beatrice" on pages {1, 5} when "Beatrice Halloway" is only on
+      page 1 — page 5 isn't covered, so "Beatrice" is kept.
+
+    Applied in-place to *raw_results*.
+    """
+    keys = list(raw_results.keys())
+    key_words = {k: _entry_words(k) for k in keys}
+    key_pages = {k: {p[0] for p in raw_results[k]} for k in keys}
+
+    to_remove = set()
+    for a in keys:
+        if a in to_remove:
             continue
-        key_lower = key.lower()
+        a_words = key_words[a]
+        if not a_words:
+            continue
+        a_pages = key_pages[a]
+        # Union of pages from every longer entry that contains a as a
+        # contiguous subsequence.
         covering_pages: set = set()
-        for compound, page_indices in compound_coverage.items():
-            compound_words = {w.lower() for w in re.split(r'[\s,]+', compound) if w}
-            if key_lower in compound_words:
-                covering_pages |= page_indices
-        if not covering_pages:
-            continue
-        standalone_pages = {p[0] for p in raw_results[key]}
-        if standalone_pages.issubset(covering_pages):
-            # Every standalone page has a compound covering it — drop entry.
-            del raw_results[key]
-        # Else: at least one standalone page is independent, keep entry intact.
+        for b in keys:
+            if b == a:
+                continue
+            b_words = key_words[b]
+            if len(b_words) <= len(a_words):
+                continue
+            if not is_contiguous_subsequence(a_words, b_words):
+                continue
+            covering_pages |= key_pages[b]
+        if covering_pages and a_pages.issubset(covering_pages):
+            to_remove.add(a)
+
+    for k in to_remove:
+        del raw_results[k]
+
+
+# Kept for backwards compatibility; older code paths and tests may still
+# refer to the old name. The implementation now delegates.
+_suppress_covered_components = _suppress_substring_duplicates
 
 
 # ---------------------------------------------------------------------------
