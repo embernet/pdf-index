@@ -379,7 +379,33 @@ def extract_styled_tokens(page) -> List[StyledToken]:
         # International" / "Piano Competition" in a reflowed PDF).  A short
         # last line means the block is a heading, list entry, or paragraph end
         # — it cannot be mid-sentence, so we always break the n-gram.
+        # Cross-block hyphenation join. PyMuPDF often puts the two
+        # halves of a line-wrapped word in different blocks, so the
+        # within-block join below isn't enough — "avail-" can end one
+        # block and "able" start the next. If the last token of the
+        # previous block ends in "-" and this block's first word starts
+        # lowercase, fuse them so the styled-phrase capture passes
+        # don't emit "avail- able" as two space-separated tokens.
+        cross_block_join_skip = None
         if tokens and prev_block is not None:
+            next_info = _peek_first_styled_word(block)
+            if next_info:
+                joined = try_hyphenation_join(tokens[-1].text, next_info[0])
+                if joined is not None:
+                    old = tokens[-1]
+                    tokens[-1] = StyledToken(
+                        text=joined,
+                        is_bold=old.is_bold,
+                        is_italic=old.is_italic,
+                        is_superscript=old.is_superscript,
+                        is_all_caps=_is_all_caps_word(joined),
+                        from_all_caps_line=old.from_all_caps_line,
+                    )
+                    cross_block_join_skip = next_info[0]
+
+        # Synthetic separator decision (skipped if hyphenation joined
+        # across the block boundary — the words are now a single token).
+        if cross_block_join_skip is None and tokens and prev_block is not None:
             insert_sep = True
             if col_width > 0:
                 prev_lines = prev_block.get("lines", [])
@@ -411,10 +437,16 @@ def extract_styled_tokens(page) -> List[StyledToken]:
 
         block_lines = block.get("lines", [])
         for line_idx, line in enumerate(block_lines):
-            # Hyphenation join: if the previous line in this block left a token
-            # ending in "-" and the first word of this line starts lowercase,
+            # Hyphenation join: if the previous line left a token ending
+            # in "-" and the first word of this line starts lowercase,
             # fuse them (drop the hyphen) instead of emitting both halves.
-            pending_join_skip = None  # the next-line word we already consumed
+            # Two sources for pending_join_skip: a same-block within-line
+            # join (line_idx > 0), or a cross-block join we made just
+            # above (only relevant on this block's first line).
+            pending_join_skip = None
+            if line_idx == 0 and cross_block_join_skip is not None:
+                pending_join_skip = cross_block_join_skip
+                cross_block_join_skip = None
             if line_idx > 0 and tokens:
                 first_word = _peek_first_word_of_line(line)
                 joined = try_hyphenation_join(tokens[-1].text, first_word)

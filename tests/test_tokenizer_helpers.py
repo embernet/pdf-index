@@ -93,6 +93,54 @@ def test_style_aware_break_at_block_boundary():
     )
 
 
+def test_hyphenation_join_across_block_boundary():
+    """When the two halves of a line-wrapped word land in DIFFERENT
+    PyMuPDF blocks (e.g. 'avail-' ending one block and 'able' starting
+    the next), the join must still fire so styled-phrase capture
+    doesn't later emit them as 'avail- able' or 'avail able'.
+    """
+    from model.name_indexer import extract_styled_tokens
+
+    class FakePage:
+        def __init__(self, data):
+            self._data = data
+        def get_text(self, mode):
+            return self._data
+
+    data = {
+        "blocks": [
+            {
+                "type": 0,
+                "lines": [{
+                    "bbox": (0.0, 0.0, 200.0, 10.0),
+                    "spans": [{
+                        "text": "the value is avail-",
+                        "flags": 0,
+                    }],
+                }],
+            },
+            {
+                "type": 0,
+                "lines": [{
+                    "bbox": (0.0, 12.0, 200.0, 22.0),
+                    "spans": [{
+                        "text": "able to everyone now.",
+                        "flags": 0,
+                    }],
+                }],
+            },
+        ],
+    }
+
+    tokens = extract_styled_tokens(FakePage(data))
+    texts = [t.text for t in tokens]
+    assert "available" in texts, (
+        f"expected the cross-block hyphenation to fuse 'avail-' + "
+        f"'able' into 'available'; got: {texts}"
+    )
+    assert "avail-" not in texts and "avail" not in texts and "able" not in texts
+
+
 def test_style_aware_break_suppressed_when_styles_match():
     """If both lines share the same style (e.g. plain prose wrapping),
     the lexical rule still suppresses the break so a wrapped name like
