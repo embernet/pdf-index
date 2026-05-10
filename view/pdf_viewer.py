@@ -579,10 +579,15 @@ class PDFViewer(QWidget):
 
     @staticmethod
     def _normalise_word(word: str) -> str:
-        """Strip surrounding punctuation and possessive suffix ('s/’s)
-        before comparison.
+        """Strip surrounding punctuation, curly quotes, and possessive
+        suffix ('s/’s) before comparison.
+
+        PyMuPDF's get_text("words") keeps curly quotes attached to the
+        adjacent words ("‘A", "Method’"), so the strip set has to
+        include ‘ and ’ for entries indexed via the single-quotes rule
+        to match their PDF occurrences.
         """
-        stripped = word.strip('.,;:!?()[]{}"\'-/')
+        stripped = word.strip('.,;:!?()[]{}"\'-/‘’')
         # Possessive: trailing 's or ’s. Apostrophes inside a word
         # (e.g. O'Donnell) don't count as possessives.
         if stripped.endswith("'s") or stripped.endswith("’s"):

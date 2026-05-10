@@ -80,3 +80,13 @@ def test_case_aware_match_allows_lowercase_target():
     v = _viewer()
     words = [_word("Polonaise")]
     assert v._match_term_at(words, 0, ["polonaise"]) == [0]
+
+
+def test_match_strips_curly_quotes_from_pdf_word():
+    # PyMuPDF's get_text("words") keeps the opening curly quote attached
+    # to the next word ("‘A") and the closing curly quote attached to
+    # the previous word ("Method’"). Single-quotes-rule entries like
+    # "A New Method" need to highlight across ‘A New Method’ on the page.
+    v = _viewer()
+    words = [_word("‘A"), _word("New", x=4), _word("Method’", x=8)]
+    assert v._match_term_at(words, 0, ["A", "New", "Method"]) == [0, 1, 2]
