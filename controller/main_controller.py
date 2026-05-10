@@ -1246,21 +1246,21 @@ class MainController:
         count = len(results)
         lines = [f"# Index ({count} entries)\n"]
         for kw, pages in results.items():
-            lines.append(f"**{kw}**: {pages}  ")
+            lines.append(f"**{kw}** {pages}  ")
         return "\n".join(lines)
 
     def generate_text(self, results):
         count = len(results)
         lines = [f"Index ({count} entries)\n"]
         for kw, pages in results.items():
-            lines.append(f"{kw}: {pages}")
+            lines.append(f"{kw} {pages}")
         return "\n".join(lines)
 
     def generate_html(self, results):
         count = len(results)
         lines = [f"<html><body><h1>Index ({count} entries)</h1>"]
         for kw, pages in results.items():
-            lines.append(f"<div><b>{kw}</b>: {pages}</div>")
+            lines.append(f"<div><b>{kw}</b> {pages}</div>")
         lines.append("</body></html>")
         return "\n".join(lines)
 
@@ -1316,7 +1316,7 @@ class MainController:
                     e_link = f'<a href="#{end_idx}|{kw}">{end_lbl}</a>'
                     link_strings.append(f"{s_link}-{e_link}")
 
-            lines.append(f"<div><b>{display_kw}</b>: {', '.join(link_strings)}</div>")
+            lines.append(f"<div><b>{display_kw}</b> {', '.join(link_strings)}</div>")
 
         lines.append("</body></html>")
         return "\n".join(lines)

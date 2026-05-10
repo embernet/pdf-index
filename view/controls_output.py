@@ -1,8 +1,34 @@
+import re
+
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QTextBrowser, QButtonGroup, QRadioButton, QCheckBox, QSpinBox, QLabel, QScrollArea, QTabBar, QLineEdit
 from PyQt6.QtCore import pyqtSignal, Qt, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QAction, QTextCursor
 from view.merge_view import MergeView
 from view.reports_view import ReportsView
+
+
+# A page-list token is either a digit (or digit range) or a roman-numeral
+# (or roman range), optionally followed by a trailing comma. Used to split
+# an index entry line like "Bridgewater Hall 1, 5-7, 12" into the term
+# ("Bridgewater Hall") and the page list, now that the colon separator
+# has been removed from the rendered output.
+_PAGE_TOKEN_RE = re.compile(
+    r'^(?:\d+(?:-\d+)?|[ivxlcdm]+(?:-[ivxlcdm]+)?),?$',
+    re.IGNORECASE,
+)
+
+
+def _split_index_line(line: str) -> str | None:
+    """Return the term portion of an entry line, or None if no page list
+    token is found. Splits at the first whitespace-delimited token that
+    looks like a page reference (1, 5-7, iv, xii-xiv, ...).
+    """
+    parts = line.split()
+    for i, part in enumerate(parts):
+        if _PAGE_TOKEN_RE.match(part):
+            term = " ".join(parts[:i]).strip()
+            return term or None
+    return None
 
 TAB_MODES = ["active", "markdown", "text", "html", "tag_cloud", "merge", "reports"]
 TAB_LABELS = ["Active", "Markdown", "Text", "HTML", "Tag Cloud", "Merge", "Reports"]
@@ -395,8 +421,8 @@ class ControlsOutput(QWidget):
         line = cursor.selectedText().strip()
 
         keyword = None
-        if not self.view_source_chk.isChecked() and ":" in line:
-            keyword = line.split(":", 1)[0].strip()
+        if not self.view_source_chk.isChecked():
+            keyword = _split_index_line(line)
 
         menu = self.output_text.createStandardContextMenu()
 

@@ -94,7 +94,7 @@ FORBIDDEN = {
 # Helpers
 # ---------------------------------------------------------------------------
 
-ENTRY_RE = re.compile(r'^\*\*(.+?)\*\*:', re.MULTILINE)
+ENTRY_RE = re.compile(r'^\*\*(.+?)\*\* ', re.MULTILINE)
 
 
 def collect_flags(occurrences):
@@ -217,9 +217,9 @@ def _write_format_files(path_base: Path, results: dict) -> None:
     txt_lines = [f"Index ({count} entries)\n"]
     html_lines = [f"<html><body><h1>Index ({count} entries)</h1>"]
     for kw, pages in results.items():
-        md_lines.append(f"**{kw}**: {pages}  ")
-        txt_lines.append(f"{kw}: {pages}")
-        html_lines.append(f"<div><b>{kw}</b>: {pages}</div>")
+        md_lines.append(f"**{kw}** {pages}  ")
+        txt_lines.append(f"{kw} {pages}")
+        html_lines.append(f"<div><b>{kw}</b> {pages}</div>")
     html_lines.append("</body></html>")
     with open(str(path_base) + ".md", "w", encoding="utf-8") as f:
         f.write("\n".join(md_lines))
