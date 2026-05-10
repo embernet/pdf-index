@@ -859,11 +859,14 @@ class MainController:
             content = self.generate_html(self.last_formatted_results)
             format_type = 'html'
         elif mode == "active":
-            ctrl_local = self.view.controls_output
             from model.indexer import filter_by_style
-            bucket = ctrl_local.get_style_view()
-            if (bucket != "aggregate"
-                    and ctrl_local.separate_style_files_chk.isChecked()):
+            bucket = self.view.controls_output.get_style_view()
+            # separate_style_files_chk lives on the SettingsSidebar after
+            # the sidebar refactor, not on ControlsOutput.
+            separate_on = (
+                self.view.settings_sidebar.separate_style_files_chk.isChecked()
+            )
+            if bucket != "aggregate" and separate_on:
                 active_raw = filter_by_style(self.last_raw_results, bucket)
             else:
                 active_raw = self.last_raw_results
