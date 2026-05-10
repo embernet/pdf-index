@@ -1,5 +1,23 @@
 import sys
 import os
+import traceback
+
+
+def _excepthook(exc_type, exc_value, exc_tb):
+    """Print uncaught exceptions to stderr and keep the app alive.
+
+    PyQt6 calls qFatal -> abort() when a slot raises an unhandled
+    Python exception, which obscures the traceback inside a macOS
+    crash report. Installing this excepthook before QApplication is
+    created routes those exceptions through Python's normal
+    traceback printer instead, so a buggy slot logs a stack trace
+    and the user can keep working.
+    """
+    traceback.print_exception(exc_type, exc_value, exc_tb)
+
+
+sys.excepthook = _excepthook
+
 
 def main():
     print(f"Python Executable: {sys.executable}")

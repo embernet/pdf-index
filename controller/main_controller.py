@@ -693,11 +693,28 @@ class MainController:
         self.view.settings_sidebar.create_btn.setEnabled(True)
         self.last_raw_results = merged_raw
         self._last_report_sections = None
-        # Apply any saved user merges (e.g. "Paul" → "Smith, Paul")
-        self._apply_merge_mappings()
-        self.process_and_display_results()
-        # Apply auto-highlight to current page now that index is available
-        self._auto_highlight_current_page()
+        # Apply any saved user merges (e.g. "Paul" → "Smith, Paul"). Each
+        # post-merge step is wrapped so that a bug in one stage prints a
+        # traceback and leaves the index visible rather than aborting the
+        # whole app via PyQt6's qFatal-on-slot-exception behaviour.
+        try:
+            self._apply_merge_mappings()
+        except Exception:
+            import traceback
+            print("error during _apply_merge_mappings:")
+            traceback.print_exc()
+        try:
+            self.process_and_display_results()
+        except Exception:
+            import traceback
+            print("error during process_and_display_results:")
+            traceback.print_exc()
+        try:
+            self._auto_highlight_current_page()
+        except Exception:
+            import traceback
+            print("error during _auto_highlight_current_page:")
+            traceback.print_exc()
 
     def _on_style_view_changed(self, _bucket):
         self.save_current_config()
