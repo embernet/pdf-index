@@ -45,6 +45,18 @@ def test_hyphenation_join_empty():
     assert try_hyphenation_join("Bridge-", "") is None
 
 
+def test_hyphenation_join_skips_when_non_letter_before_hyphen():
+    # The trailing '-' is part of a token like '5/6-' or 'mid-2024-' where the
+    # character immediately before '-' is a digit or punctuation, not a letter.
+    # These are not mid-syllable line wraps and must not be fused — '5/6-level'
+    # is a real compound that should stay as written.
+    assert try_hyphenation_join("5/6-", "level") is None
+    assert try_hyphenation_join("6-", "level") is None
+    assert try_hyphenation_join("2024-", "edition") is None
+    # A bare hyphen has no character before it at all.
+    assert try_hyphenation_join("-", "rest") is None
+
+
 def test_style_aware_break_at_block_boundary():
     """A bold heading block followed by a plain-styled paragraph block
     must be split by a synthetic break, even though both adjacent words

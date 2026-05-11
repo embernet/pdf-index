@@ -250,6 +250,27 @@ def _strip_possessive(word: str) -> str:
     return word
 
 
+def _join_ngram_strip_terminal_possessive(ngram: List[str]) -> str:
+    """Join an n-gram into a single string, stripping a trailing 's/’s only
+    from the FINAL word.
+
+    A possessive in the middle of a proper-noun phrase ("Adam Gorb's Ballade")
+    is part of a longer title and must be preserved. A possessive on the
+    final word ("Adam Gorb's book") means the proper-noun phrase ended at
+    that owner and the 's modifies a non-name word that has already broken
+    the n-gram — so it must be stripped to give the canonical name.
+    """
+    if not ngram:
+        return ""
+    last = ngram[-1]
+    if last.endswith("'s") or last.endswith("’s"):
+        last = last[:-2]
+        if not last:
+            return " ".join(ngram[:-1])
+        return " ".join(ngram[:-1] + [last])
+    return " ".join(ngram)
+
+
 def extract_context_window(tokens, target_text: str, window_chars: int = 200) -> str:
     """Return a short text window around the first occurrence of *target_text*.
 
@@ -340,12 +361,19 @@ def try_hyphenation_join(prev_word: str, next_word: str) -> Optional[str]:
     """If *prev_word* ends in '-' and *next_word* starts with a lowercase letter,
     return the joined word (hyphen removed). Otherwise return None.
 
-    The lowercase-continuation rule distinguishes mid-syllable line wraps
-    ("Bridge-water") from real hyphenated compounds ("Anglo-Saxon").
+    Both characters immediately adjacent to the hyphen must be letters: this
+    distinguishes mid-syllable line wraps ("Bridge-water" → "Bridgewater")
+    from real hyphenated compounds ("Anglo-Saxon") AND from non-word tokens
+    that happen to end in '-' such as "5/6-" or a stand-alone "-". The
+    lowercase-after rule then weeds out the remaining real compounds where
+    the continuation is capitalised.
     """
     if not prev_word or not next_word:
         return None
     if not prev_word.endswith("-"):
+        return None
+    char_before_hyphen = prev_word[-2:-1]
+    if not char_before_hyphen.isalpha():
         return None
     if not next_word[0].islower():
         return None
@@ -575,7 +603,63 @@ def extract_styled_tokens(page) -> List[StyledToken]:
 
         prev_block = block
 
-    return tokens
+    return _merge_split_apostrophe_suffix(tokens)
+
+
+# Lowercase contraction / possessive suffixes that follow an apostrophe.
+# When PyMuPDF puts the apostrophe in a different span from the preceding
+# word (e.g. an italicised name with a plain-styled "'s"), the per-span
+# tokenizer can't absorb the apostrophe back into the word — it ends up
+# as a standalone token. Without merging it back, the single-quotes
+# capture rule misreads it as a closing curly quote. The merge is gated
+# by this fixed set of suffixes so a genuine closing quote followed by a
+# normal word (e.g. "‘Title’ Other") is NOT swallowed.
+_CONTRACTION_SUFFIXES = frozenset({"s", "t", "m", "d", "re", "ve", "ll"})
+
+
+def _merge_split_apostrophe_suffix(tokens: List["StyledToken"]) -> List["StyledToken"]:
+    """Fold span-split possessive/contraction sequences back into one word.
+
+    Pattern:  word | apostrophe | short-suffix  →  word'suffix
+
+    Applies when:
+      - the middle token is exactly an ASCII or curly apostrophe (', ’)
+      - the previous token ends in a letter
+      - the next token is a known contraction suffix (s, t, m, d, re, ve, ll)
+
+    The merged token inherits the previous token's styling.
+    """
+    if len(tokens) < 3:
+        return tokens
+    out: List["StyledToken"] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        if i + 2 < n:
+            prev_t = tokens[i]
+            ap_t = tokens[i + 1]
+            nxt_t = tokens[i + 2]
+            if (
+                ap_t.text in ("'", "’")
+                and prev_t.text
+                and prev_t.text[-1].isalpha()
+                and nxt_t.text
+                and nxt_t.text.lower() in _CONTRACTION_SUFFIXES
+            ):
+                merged_text = prev_t.text + ap_t.text + nxt_t.text
+                out.append(StyledToken(
+                    text=merged_text,
+                    is_bold=prev_t.is_bold,
+                    is_italic=prev_t.is_italic,
+                    is_superscript=prev_t.is_superscript,
+                    is_all_caps=_is_all_caps_word(merged_text),
+                    from_all_caps_line=prev_t.from_all_caps_line,
+                ))
+                i += 3
+                continue
+        out.append(tokens[i])
+        i += 1
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -683,7 +767,7 @@ def extract_names_from_tokens(
         if token.is_superscript and _is_footnote_ref(word):
             if current_ngram:
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
-                    names.append((" ".join(current_ngram), dict(current_flags)))
+                    names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
@@ -694,7 +778,7 @@ def extract_names_from_tokens(
         if _is_punctuation(word):
             if current_ngram:
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
-                    names.append((" ".join(current_ngram), dict(current_flags)))
+                    names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
@@ -703,10 +787,10 @@ def extract_names_from_tokens(
                 after_sentence_end = True
             continue
 
-        # Strip possessive suffix ("Hall's" → "Hall") before any further processing.
-        word = _strip_possessive(word)
-        if not word:
-            continue
+        # Possessive 's is NOT stripped per-token. A possessive mid-phrase
+        # ("Adam Gorb's Ballade") is part of a title and must be preserved.
+        # Stripping happens at flush time on the LAST word of the n-gram only:
+        # see _join_ngram_strip_terminal_possessive.
 
         word_lower = word.lower()
         is_styled = (token.is_bold and include_bold) or token.is_italic
@@ -729,7 +813,7 @@ def extract_names_from_tokens(
                     current_flags["caps"] = True
             else:
                 if current_ngram:
-                    names.append((" ".join(current_ngram), dict(current_flags)))
+                    names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                     current_ngram = []
                     current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                     current_ngram_italic = None
@@ -740,7 +824,7 @@ def extract_names_from_tokens(
         if word_lower in STRUCTURAL_WORDS:
             if current_ngram:
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
-                    names.append((" ".join(current_ngram), dict(current_flags)))
+                    names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
@@ -755,7 +839,7 @@ def extract_names_from_tokens(
         if _is_roman_numeral(word):
             if current_ngram:
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
-                    names.append((" ".join(current_ngram), dict(current_flags)))
+                    names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
@@ -770,7 +854,7 @@ def extract_names_from_tokens(
         if _is_number_like(word):
             if current_ngram:
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
-                    names.append((" ".join(current_ngram), dict(current_flags)))
+                    names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
@@ -799,7 +883,7 @@ def extract_names_from_tokens(
                 continue
             if current_ngram:
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
-                    names.append((" ".join(current_ngram), dict(current_flags)))
+                    names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
@@ -826,7 +910,7 @@ def extract_names_from_tokens(
                     after_sentence_end = False
                     if current_ngram:
                         if not (len(current_ngram) == 1 and started_with_styled_bypass):
-                            names.append((" ".join(current_ngram), dict(current_flags)))
+                            names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                         current_ngram = []
                         current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                         current_ngram_italic = None
@@ -851,7 +935,7 @@ def extract_names_from_tokens(
         if token.from_all_caps_line:
             if current_ngram:
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
-                    names.append((" ".join(current_ngram), dict(current_flags)))
+                    names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
@@ -866,7 +950,7 @@ def extract_names_from_tokens(
             # (e.g. "Adam Gorb's" in plain text followed by italic "Absinthe").
             if current_ngram and token.is_italic != current_ngram_italic:
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
-                    names.append((" ".join(current_ngram), dict(current_flags)))
+                    names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
@@ -885,7 +969,7 @@ def extract_names_from_tokens(
             # Lowercase non-styled, non-connector word: breaks n-gram
             if current_ngram:
                 if not (len(current_ngram) == 1 and started_with_styled_bypass):
-                    names.append((" ".join(current_ngram), dict(current_flags)))
+                    names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
@@ -894,7 +978,7 @@ def extract_names_from_tokens(
     # Flush any remaining n-gram
     if current_ngram:
         if not (len(current_ngram) == 1 and started_with_styled_bypass):
-            names.append((" ".join(current_ngram), dict(current_flags)))
+            names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
 
     return names
 
@@ -927,7 +1011,7 @@ def extract_bold_phrases(tokens: List[StyledToken]) -> List[str]:
             if len(current) == 1 and current[0].lower() in DEFAULT_STOPWORDS:
                 current.clear()
                 return
-            phrases.append(" ".join(current))
+            phrases.append(_join_ngram_strip_terminal_possessive(current))
             current.clear()
 
     for token in tokens:
@@ -955,9 +1039,9 @@ def extract_bold_phrases(tokens: List[StyledToken]) -> List[str]:
                 flush()
             continue
 
-        word = _strip_possessive(word)
-        if not word:
-            continue
+        # Possessive 's is preserved when mid-phrase (e.g. an italic-styled
+        # title like 'Adam Gorb's Ballade'); stripped only on the final word
+        # of the captured run via flush().
 
         if word.lower().rstrip('.') in TITLE_PREFIXES:
             continue
@@ -1007,7 +1091,7 @@ def extract_italic_phrases(tokens: List[StyledToken]) -> List[str]:
             if len(current) == 1 and current[0].lower() in DEFAULT_STOPWORDS:
                 current.clear()
                 return
-            phrases.append(" ".join(current))
+            phrases.append(_join_ngram_strip_terminal_possessive(current))
             current.clear()
 
     for token in tokens:
@@ -1035,9 +1119,8 @@ def extract_italic_phrases(tokens: List[StyledToken]) -> List[str]:
                 flush()
             continue
 
-        word = _strip_possessive(word)
-        if not word:
-            continue
+        # Possessive 's is preserved when mid-phrase; stripped only on the
+        # final word of the captured run via flush().
 
         if word.lower() in STRUCTURAL_WORDS:
             flush()
@@ -1125,9 +1208,10 @@ def extract_quoted_phrases(tokens: List[StyledToken]) -> List[str]:
                 flush()
             continue
 
-        word = _strip_possessive(word)
-        if not word:
-            continue
+        # The quoted-title rule captures literal proper names — Chetham's
+        # Piano Summer School, A Reader's Companion — so the possessive 's
+        # is part of the title and must be preserved (unlike the general
+        # name-extraction pass which canonicalises by stripping it).
 
         if word.lower() in STRUCTURAL_WORDS:
             flush()
@@ -1180,15 +1264,39 @@ def find_known_names_in_tokens(
             word_tokens.append(None)
             word_flags.append(None)
             continue
-        word = _strip_possessive(word)
-        if not word:
-            continue
+        # Possessive 's stripping is deferred: a mid-phrase possessive
+        # ("Adam Gorb's Ballade") must be preserved so the vocab entry
+        # matches verbatim. Stripping happens in a post-pass below where
+        # we know whether the next non-sentinel token is capitalised.
         word_tokens.append(word)
         word_flags.append({
             "italic": bool(token.is_italic),
             "bold": bool(token.is_bold),
             "caps": bool(token.is_all_caps),
         })
+
+    # Strip 's/'s only from possessives whose proper-noun phrase ended at
+    # this token (next non-sentinel token is missing or not capitalised).
+    # Mirrors the n-gram boundary rule in extract_names_from_tokens so the
+    # matcher can recover the canonical name "Adam Gorb" from text reading
+    # "Adam Gorb's book" while still matching the title "Adam Gorb's
+    # Ballade" verbatim.
+    for i, w in enumerate(word_tokens):
+        if w is None:
+            continue
+        if not (w.endswith("'s") or w.endswith("’s")):
+            continue
+        nxt = None
+        for j in range(i + 1, len(word_tokens)):
+            if word_tokens[j] is None:
+                break
+            nxt = word_tokens[j]
+            break
+        if nxt is None or not nxt[0].isupper():
+            stripped = w[:-2]
+            word_tokens[i] = stripped if stripped else None
+            if not stripped:
+                word_flags[i] = None
 
     found: List[Tuple[str, dict]] = []
     n_tokens = len(word_tokens)

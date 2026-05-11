@@ -197,6 +197,140 @@ def test_extract_quoted_drops_lone_stop_word():
     assert out == []
 
 
+def test_extract_quoted_handles_span_split_apostrophe():
+    """When a style change splits 'Chetham’s' into separate spans, the
+    second span starts with the curly apostrophe ’ which the per-span
+    tokenizer can't fold back into the preceding word. Without merging,
+    the standalone ’ token would close the quote prematurely and capture
+    only 'Chetham' instead of the full title.
+    """
+    from model.name_indexer import extract_styled_tokens, extract_quoted_phrases
+
+    class FakePage:
+        def __init__(self, data):
+            self._data = data
+        def get_text(self, mode):
+            return self._data
+
+    # Mimic PyMuPDF emitting "Chetham" and "’s piano summer school" as
+    # adjacent spans (e.g. an italicised name followed by plain prose).
+    data = {
+        "blocks": [{
+            "type": 0,
+            "lines": [{
+                "bbox": (0.0, 0.0, 400.0, 10.0),
+                "spans": [
+                    {"text": "Joe was at ‘", "flags": 0},
+                    {"text": "Chetham", "flags": 2},          # italic
+                    {"text": "’s piano summer school’ last week.", "flags": 0},
+                ],
+            }],
+        }],
+    }
+    tokens = extract_styled_tokens(FakePage(data))
+    out = extract_quoted_phrases(tokens)
+    assert "Chetham’s piano summer school" in out, (
+        f"expected the full title to be captured despite the span split "
+        f"at the apostrophe; got {out!r}"
+    )
+
+
+def test_extract_quoted_preserves_possessive_in_title():
+    """Titles enclosed in single quotes are literal proper names whose
+    possessive 's is part of the name. Stripping the possessive would
+    mangle real institutions like 'Chetham's Piano Summer School'.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        [_quote_token("‘")]
+        + [StyledToken(text="Chetham’s", is_bold=False, is_italic=False,
+                       is_superscript=False, is_all_caps=False,
+                       from_all_caps_line=False)]
+        + _tokens("Piano School", italic=False)
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert "Chetham’s Piano School" in out
+
+
+def test_possessive_stripped_when_phrase_ends_at_possessive():
+    """'Adam Gorb’s book was released' — Gorb’s is followed by a common
+    word, so the proper-noun phrase ended at Gorb. The 's must be stripped.
+    """
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("Then", "Adam", "Gorb’s", "book", "was", "released", ".")
+    ]
+    names = [n for n, _ in extract_names_from_tokens(tokens)]
+    assert "Adam Gorb" in names
+    assert "Adam Gorb’s" not in names
+
+
+def test_possessive_preserved_when_phrase_continues():
+    """'Adam Gorb’s Ballade was played' — Ballade is also a capitalised
+    name word, so Gorb’s is mid-phrase and the apostrophe is part of the
+    title. The captured entry must be 'Adam Gorb’s Ballade'.
+    """
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("Then", "Adam", "Gorb’s", "Ballade", "was", "played", ".")
+    ]
+    names = [n for n, _ in extract_names_from_tokens(tokens)]
+    assert "Adam Gorb’s Ballade" in names
+    assert "Adam Gorb Ballade" not in names
+
+
+def test_match_finds_internal_possessive_title():
+    """find_known_names_in_tokens must be able to locate a vocab entry
+    that contains a mid-phrase possessive."""
+    from model.name_indexer import find_known_names_in_tokens
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("Then", "Adam", "Gorb’s", "Ballade", "was", "played", ".")
+    ]
+    vocab = {"Adam Gorb’s Ballade"}
+    vocab_lower = {"adam gorb’s ballade": "Adam Gorb’s Ballade"}
+    found = [n for n, _ in find_known_names_in_tokens(tokens, vocab, vocab_lower, 5)]
+    assert "Adam Gorb’s Ballade" in found
+
+
+def test_match_finds_canonical_name_through_terminal_possessive():
+    """find_known_names_in_tokens must still match 'Adam Gorb' inside
+    text where it appears as 'Adam Gorb’s book' — the trailing possessive
+    is what was stripped when the vocab entry was discovered, so the
+    matcher needs to mirror that stripping here."""
+    from model.name_indexer import find_known_names_in_tokens
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("Then", "Adam", "Gorb’s", "book", "was", "released", ".")
+    ]
+    vocab = {"Adam Gorb"}
+    vocab_lower = {"adam gorb": "Adam Gorb"}
+    found = [n for n, _ in find_known_names_in_tokens(tokens, vocab, vocab_lower, 5)]
+    assert "Adam Gorb" in found
+
+
+def test_extract_quoted_still_closes_on_real_closing_quote():
+    """A closing ’ followed by a normal-length capitalised word (the next
+    sentence) is NOT a contraction — it must still close the run."""
+    from model.name_indexer import extract_quoted_phrases
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("Title Here", italic=False)
+        + [_quote_token("’")]
+        + _tokens("Other words follow", italic=False)
+    )
+    out = extract_quoted_phrases(tokens)
+    assert "Title Here" in out
+    # Importantly, "Other" must NOT have been absorbed into the run.
+    assert not any("Other" in p for p in out)
+
+
 def _occ(idx, label="x", flags=None):
     if flags is None:
         flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
