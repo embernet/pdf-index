@@ -204,7 +204,7 @@ def test_thread_persists_state_after_each_task(qapp, tmp_path, monkeypatch):
         "category": True, "seealso": False, "threshold": 100,
     }
     thread = enrich.LLMEnrichmentThread(
-        raw_results=raw, formatted={}, host="x", model="m",
+        raw_results=raw, formatted={}, hosts=["x"], model="m",
         options=options, project_path=str(tmp_path),
     )
     captured = _drive_thread(thread)
@@ -258,7 +258,7 @@ def test_thread_resumes_from_saved_state(qapp, tmp_path, monkeypatch):
 
     monkeypatch.setattr(enrich.llm_client, "complete", fake_complete)
     thread = enrich.LLMEnrichmentThread(
-        raw_results=raw, formatted={}, host="x", model="m",
+        raw_results=raw, formatted={}, hosts=["x"], model="m",
         options=options, project_path=str(tmp_path),
         resume_state=state,
     )
@@ -291,7 +291,7 @@ def test_thread_pause_halts_after_current_task(qapp, tmp_path, monkeypatch):
 
     monkeypatch.setattr(enrich.llm_client, "complete", fake_complete)
     thread = enrich.LLMEnrichmentThread(
-        raw_results=raw, formatted={}, host="x", model="m",
+        raw_results=raw, formatted={}, hosts=["x"], model="m",
         options=options, project_path=str(tmp_path),
     )
     captured = _drive_thread(thread)
@@ -321,7 +321,7 @@ def test_thread_cancel_halts_after_current_task(qapp, tmp_path, monkeypatch):
 
     monkeypatch.setattr(enrich.llm_client, "complete", fake_complete)
     thread = enrich.LLMEnrichmentThread(
-        raw_results=raw, formatted={}, host="x", model="m",
+        raw_results=raw, formatted={}, hosts=["x"], model="m",
         options=options, project_path=str(tmp_path),
     )
     captured = _drive_thread(thread)
@@ -341,7 +341,7 @@ def test_thread_writes_log_lines(qapp, tmp_path, monkeypatch):
     }
     monkeypatch.setattr(enrich.llm_client, "complete", lambda **kw: {})
     thread = enrich.LLMEnrichmentThread(
-        raw_results=raw, formatted={}, host="x", model="m",
+        raw_results=raw, formatted={}, hosts=["x"], model="m",
         options=options, project_path=str(tmp_path),
     )
     _drive_thread(thread)

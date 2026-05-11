@@ -749,7 +749,7 @@ class LLMEnrichmentThread(QThread):
         self,
         raw_results: dict,
         formatted: dict,
-        host: str,
+        hosts: List[str],
         model: str,
         options: dict,
         project_path: Optional[str] = None,
@@ -758,7 +758,7 @@ class LLMEnrichmentThread(QThread):
         super().__init__()
         self._raw = raw_results or {}
         self._formatted = formatted or {}
-        self._host = host
+        self._hosts = list(hosts) if hosts else []
         self._model = model
         self._options = options or {}
         self._project_path = project_path
@@ -784,6 +784,10 @@ class LLMEnrichmentThread(QThread):
     # ---- Main loop ------------------------------------------------------
 
     def run(self):
+        # Temporary single-host execution until parallel dispatch lands.
+        # See Task 6/7 for the ThreadPoolExecutor replacement.
+        primary_host = self._hosts[0] if self._hosts else ""
+
         # 1. Build / restore the plan and accumulator
         if self._resume_state is not None:
             tasks = [
@@ -808,7 +812,7 @@ class LLMEnrichmentThread(QThread):
                 raw_results=self._raw,
                 options=self._options,
                 model=self._model,
-                host=self._host,
+                host=primary_host,
             )
             completed_ids = set()
             suggestions = dict(state.suggestions)
@@ -870,7 +874,7 @@ class LLMEnrichmentThread(QThread):
                 fragment = execute_task(
                     task=task,
                     raw_results=self._raw,
-                    host=self._host,
+                    host=primary_host,
                     model=self._model,
                     all_entries_set=all_entries_set,
                 )

@@ -1774,7 +1774,7 @@ class MainController:
         thread = LLMEnrichmentThread(
             raw_results=self.last_raw_results,
             formatted=self.last_formatted_results or {},
-            host=host,
+            hosts=[host],
             model=model,
             options=options,
             project_path=self.project_path,
