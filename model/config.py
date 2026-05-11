@@ -22,6 +22,7 @@ class ConfigManager:
         "style_view": "aggregate",
         "llm_enrichment_enabled": False,
         "llm_host": "http://localhost:11434",
+        "llm_hosts": ["http://localhost:11434"],
         "llm_model": "qwen2.5:7b",
         "llm_subindex_threshold": 8,
         "llm_subindex_enabled": True,
@@ -35,17 +36,20 @@ class ConfigManager:
         config_path = os.path.join(project_path, "config.json")
         if not os.path.exists(config_path):
             return ConfigManager.DEFAULT_CONFIG.copy()
-        
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, "r") as f:
                 data = json.load(f)
-                # Merge with defaults to ensure all keys exist
-                config = ConfigManager.DEFAULT_CONFIG.copy()
-                config.update(data)
-                return config
         except Exception as e:
             print(f"Error loading config: {e}")
             return ConfigManager.DEFAULT_CONFIG.copy()
+        config = ConfigManager.DEFAULT_CONFIG.copy()
+        config.update(data)
+        # Migrate legacy singular llm_host -> llm_hosts list when the new
+        # key was absent from the on-disk file. Keep llm_host populated
+        # too for one-cycle back-compat in case anything still reads it.
+        if "llm_hosts" not in data and "llm_host" in data:
+            config["llm_hosts"] = [data["llm_host"]]
+        return config
 
     @staticmethod
     def save_config(project_path, config_data):
