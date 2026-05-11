@@ -42,3 +42,22 @@ def test_format_summary_lists_each_port():
     assert "http://10.0.0.42:11435" in out
     assert "http://10.0.0.42:11436" in out
     assert out.startswith("Cluster ready.")
+
+
+def test_parse_args_defaults():
+    args = cluster.parse_args([])
+    assert args.instances == cluster.DEFAULT_INSTANCES
+    assert args.start_port == cluster.DEFAULT_START_PORT
+    assert args.num_parallel == cluster.DEFAULT_NUM_PARALLEL
+    assert args.preload is None
+
+
+def test_parse_args_overrides():
+    args = cluster.parse_args([
+        "--instances", "3", "--start-port", "11500",
+        "--num-parallel", "2", "--preload", "qwen2.5:7b",
+    ])
+    assert args.instances == 3
+    assert args.start_port == 11500
+    assert args.num_parallel == 2
+    assert args.preload == "qwen2.5:7b"
