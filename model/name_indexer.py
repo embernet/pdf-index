@@ -250,6 +250,56 @@ def _strip_possessive(word: str) -> str:
     return word
 
 
+def extract_context_window(tokens, target_text: str, window_chars: int = 200) -> str:
+    """Return a short text window around the first occurrence of *target_text*.
+
+    Reconstructs the page text by joining token texts with single spaces (the
+    same convention as ``find_keyword_flags_in_tokens``) and returns a window
+    of roughly ``window_chars`` characters centred on the first whole-word
+    case-insensitive match. Returns the empty string if no match is found.
+
+    The result is suitable for showing an LLM the immediate context of a
+    term occurrence so it can semantically classify or cluster it.
+    """
+    if not target_text or not tokens:
+        return ""
+
+    parts: list[str] = []
+    cursor = 0
+    spans: list[tuple[int, int]] = []
+    for tok in tokens:
+        text = getattr(tok, "text", "")
+        if not text:
+            continue
+        parts.append(text)
+        spans.append((cursor, cursor + len(text)))
+        cursor += len(text)
+        parts.append(" ")
+        cursor += 1
+    joined = "".join(parts).rstrip()
+
+    pattern = re.compile(rf'\b{re.escape(target_text)}\b', re.IGNORECASE)
+    m = pattern.search(joined)
+    if not m:
+        return ""
+
+    half = max(window_chars // 2, 30)
+    start = max(0, m.start() - half)
+    end = min(len(joined), m.end() + half)
+    snippet = joined[start:end].strip()
+    # Trim leading/trailing partial words for readability.
+    if start > 0:
+        first_space = snippet.find(" ")
+        if 0 < first_space < 20:
+            snippet = snippet[first_space + 1:]
+    if end < len(joined):
+        last_space = snippet.rfind(" ")
+        if last_space > len(snippet) - 20:
+            snippet = snippet[:last_space]
+    snippet = re.sub(r'\s+', ' ', snippet).strip()
+    return snippet
+
+
 def _last_text_char(block) -> str:
     """Return the last non-whitespace character in a text block, or ''."""
     for line in reversed(block.get("lines", [])):
@@ -1796,6 +1846,14 @@ class NameIndexingThread(QThread):
                             seen_flags_by_name[phrase] = quoted_flags
 
                 for name, flags in seen_flags_by_name.items():
+                    # Attach a representative context window for this term on
+                    # this page so the optional LLM enrichment layer has
+                    # something to classify on. Empty string when no clean
+                    # whole-word match is found in the joined token stream.
+                    ctx = extract_context_window(tokens, name)
+                    if ctx:
+                        flags = dict(flags)
+                        flags["context"] = ctx
                     all_occurrences[name].append((i, page_label, flags))
 
                 progress = 55 + int((loop_idx + 1) / max(indexable, 1) * 25)

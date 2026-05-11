@@ -80,8 +80,15 @@ def make_flags(italic: bool = False, bold: bool = False, caps: bool = False,
 
 
 def merge_flags(a: dict, b: dict) -> dict:
-    """OR-combine two flag dicts."""
-    return {
+    """OR-combine two flag dicts.
+
+    Style booleans are OR'd. The optional ``context`` string (used by the
+    LLM enrichment layer to remember the surrounding sentence of an
+    occurrence) is non-boolean: keep the first non-empty value so it
+    survives merges, falling back to the empty string when neither side
+    carries one.
+    """
+    merged = {
         "italic": a.get("italic", False) or b.get("italic", False),
         "bold": a.get("bold", False) or b.get("bold", False),
         "caps": a.get("caps", False) or b.get("caps", False),
@@ -89,6 +96,11 @@ def merge_flags(a: dict, b: dict) -> dict:
             a.get("single-quotes", False) or b.get("single-quotes", False)
         ),
     }
+    ctx_a = a.get("context") if isinstance(a, dict) else ""
+    ctx_b = b.get("context") if isinstance(b, dict) else ""
+    if ctx_a or ctx_b:
+        merged["context"] = ctx_a or ctx_b
+    return merged
 
 
 def normalise_occurrence(occ) -> tuple:
@@ -102,12 +114,15 @@ def normalise_occurrence(occ) -> tuple:
         if not isinstance(flags, dict):
             flags = dict(EMPTY_FLAGS)
         else:
+            ctx = flags.get("context") if isinstance(flags, dict) else None
             flags = {
                 "italic": bool(flags.get("italic", False)),
                 "bold": bool(flags.get("bold", False)),
                 "caps": bool(flags.get("caps", False)),
                 "single-quotes": bool(flags.get("single-quotes", False)),
             }
+            if isinstance(ctx, str) and ctx:
+                flags["context"] = ctx
         return (idx, label, flags)
     if len(occ) == 2:
         idx, label = occ
@@ -264,7 +279,7 @@ class IndexingThread(QThread):
                 pattern = re.compile(rf'\b{escaped_kw}\b', re.IGNORECASE)
                 regex_map[norm_kw] = pattern
 
-            from model.name_indexer import extract_styled_tokens
+            from model.name_indexer import extract_styled_tokens, extract_context_window
 
             front_start = 0 if self.index_front_matter and self.start_page > 0 else self.start_page
             front_end = self.start_page  # exclusive
@@ -293,6 +308,13 @@ class IndexingThread(QThread):
                         flags = find_keyword_flags_in_tokens(tokens, norm_kw)
                         if flags is not None:
                             if not raw_results[original_kw] or raw_results[original_kw][-1][0] != i:
+                                # Capture surrounding context for the LLM enrichment layer.
+                                # Empty string when the helper finds nothing — the rest of
+                                # the pipeline ignores empty contexts.
+                                ctx = extract_context_window(tokens, norm_kw)
+                                if ctx:
+                                    flags = dict(flags)
+                                    flags["context"] = ctx
                                 raw_results[original_kw].append((i, page_label, flags))
 
                     progress = int((i + 1) / total_pages * 100)

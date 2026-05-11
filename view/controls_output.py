@@ -202,14 +202,26 @@ class ControlsOutput(QWidget):
         self.style_caps_btn = QRadioButton("Caps")
         self.style_single_quotes_btn = QRadioButton("Single Quotes")
         self.style_other_btn = QRadioButton("Other")
+        self.style_llm_enhanced_btn = QRadioButton("LLM Enhanced")
+        self.style_llm_enhanced_btn.setToolTip(
+            "Show the LLM-enhanced index. Sub-entries, alias merges, "
+            "categories and see-also references are folded in. The base "
+            "rule-based files (index.md etc.) are unchanged on disk."
+        )
         self.style_aggregate_btn.setChecked(True)
 
         for btn in (self.style_aggregate_btn, self.style_italic_btn,
                     self.style_bold_btn, self.style_caps_btn,
-                    self.style_single_quotes_btn, self.style_other_btn):
+                    self.style_single_quotes_btn, self.style_other_btn,
+                    self.style_llm_enhanced_btn):
             self.style_bg.addButton(btn)
             style_layout.addWidget(btn)
         style_layout.addStretch()
+
+        # The LLM Enhanced button is hidden until enrichment has produced
+        # at least one suggestion in the current session (or a previously
+        # saved suggestions set is loaded).
+        self.style_llm_enhanced_btn.setVisible(False)
 
         self.style_bg.buttonClicked.connect(self._on_style_changed)
         self.style_selector_bar.setVisible(False)
@@ -396,7 +408,21 @@ class ControlsOutput(QWidget):
             return "single-quotes"
         if self.style_other_btn.isChecked():
             return "other"
+        if self.style_llm_enhanced_btn.isChecked():
+            return "llm_enhanced"
         return "aggregate"
+
+    def set_llm_enhanced_available(self, available: bool):
+        """Show/hide the LLM Enhanced radio. When hidden mid-selection
+        (e.g. user discards run state) the selection falls back to
+        Aggregate so the view doesn't get stuck on an empty bucket."""
+        was_visible = self.style_llm_enhanced_btn.isVisible()
+        self.style_llm_enhanced_btn.setVisible(available)
+        if not available and self.style_llm_enhanced_btn.isChecked():
+            self.style_aggregate_btn.setChecked(True)
+            self._on_style_changed(self.style_aggregate_btn)
+        if available != was_visible:
+            self.style_selector_bar.update()
 
     def _update_cloud_hint(self):
         submode = self.get_cloud_submode()
@@ -504,7 +530,13 @@ class ControlsOutput(QWidget):
             "caps": self.style_caps_btn,
             "single-quotes": self.style_single_quotes_btn,
             "other": self.style_other_btn,
+            "llm_enhanced": self.style_llm_enhanced_btn,
         }.get(mode_view, self.style_aggregate_btn)
+        # Don't restore an LLM Enhanced selection if the button isn't
+        # available yet — fall back to Aggregate so the user doesn't see
+        # a blank pane on project load before enrichment has run.
+        if not btn.isVisible():
+            btn = self.style_aggregate_btn
         btn.setChecked(True)
 
     def scroll_to_term(self, term):

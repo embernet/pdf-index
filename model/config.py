@@ -20,6 +20,14 @@ class ConfigManager:
         "separate_style_files": True,
         "index_front_matter_roman": True,
         "style_view": "aggregate",
+        "llm_enrichment_enabled": False,
+        "llm_host": "http://localhost:11434",
+        "llm_model": "qwen2.5:7b",
+        "llm_subindex_threshold": 8,
+        "llm_subindex_enabled": True,
+        "llm_alias_enabled": True,
+        "llm_category_enabled": True,
+        "llm_seealso_enabled": True,
     }
 
     @staticmethod
