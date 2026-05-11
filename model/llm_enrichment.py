@@ -22,7 +22,9 @@ The output shape is the ``suggestions`` dict consumed by
 
 from __future__ import annotations
 
+import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -124,6 +126,117 @@ def preflight_hosts(hosts: List[str], timeout: float = 2.0) -> List[str]:
     in red in the UI for the duration of the run.
     """
     return [h for h in hosts if llm_client.is_available(h, timeout=timeout)]
+
+
+def _stable_host_index(task_id: str, n_hosts: int) -> int:
+    """Map a task to a host slot via a stable hash so resumed runs hit
+    the same host (preserving llm_client's on-disk response cache)."""
+    if n_hosts <= 0:
+        return 0
+    # Python's hash() is process-randomised; use a simple stable digest
+    # so the same task_id maps to the same slot across runs.
+    h = 0
+    for ch in task_id:
+        h = (h * 131 + ord(ch)) & 0xFFFFFFFF
+    return h % n_hosts
+
+
+def dispatch_tasks_parallel(
+    tasks: List["EnrichmentTask"],
+    healthy_hosts: List[str],
+    raw_results: dict,
+    model: str,
+    all_entries_set: set,
+    on_task_done: Callable[["EnrichmentTask", Optional[dict], str], None],
+    on_host_state: Callable[[str, str], None],
+    should_stop: Optional[Callable[[], bool]] = None,
+) -> None:
+    """Run *tasks* across *healthy_hosts* in parallel.
+
+    on_task_done is invoked once per task with (task, fragment_or_None, host).
+    on_host_state is invoked when a host's UI state changes:
+        'running' before each task on that host
+        'available' after a successful task
+        'error' when the host returns None
+
+    A host that errors is removed from rotation for the rest of this run.
+    Errored tasks are retried on a remaining host; if none remain, the
+    remaining tasks are completed with fragment=None so the caller can
+    decide how to handle a fully-failed run.
+
+    should_stop, if provided, is polled between submissions to allow
+    cooperative pause/cancel. In-flight calls are not interrupted.
+    """
+    if not healthy_hosts:
+        for task in tasks:
+            on_task_done(task, None, "")
+        return
+
+    healthy = list(healthy_hosts)
+    lock = threading.Lock()
+
+    def pick_host(task_id: str, exclude: set) -> Optional[str]:
+        """Pick the preferred host for *task_id*, skipping any in *exclude*."""
+        with lock:
+            pool = [h for h in healthy if h not in exclude]
+            if not pool:
+                return None
+            return pool[_stable_host_index(task_id, len(pool))]
+
+    def drop_host(host: str) -> None:
+        with lock:
+            if host in healthy:
+                healthy.remove(host)
+
+    def run_task(task: "EnrichmentTask", host: str):
+        on_host_state(host, "running")
+        try:
+            fragment = execute_task(
+                task=task, raw_results=raw_results,
+                host=host, model=model,
+                all_entries_set=all_entries_set,
+            )
+        except Exception:
+            fragment = None
+        if fragment is None:
+            on_host_state(host, "error")
+            drop_host(host)
+        else:
+            on_host_state(host, "available")
+        return task, fragment, host
+
+    with ThreadPoolExecutor(max_workers=len(healthy_hosts)) as ex:
+        pending: Dict[Future, "EnrichmentTask"] = {}
+
+        def submit(task: "EnrichmentTask", excluded: set) -> bool:
+            host = pick_host(task.id, excluded)
+            if host is None:
+                return False
+            fut = ex.submit(run_task, task, host)
+            pending[fut] = task
+            return True
+
+        # Initial dispatch
+        for task in tasks:
+            if should_stop and should_stop():
+                break
+            ok = submit(task, excluded=set())
+            if not ok:
+                on_task_done(task, None, "")
+
+        # Drain completions, retrying failed tasks on a different host.
+        while pending:
+            for fut in as_completed(list(pending.keys())):
+                task = pending.pop(fut)
+                _, fragment, host = fut.result()
+                if fragment is None:
+                    # Retry on any other healthy host
+                    retried = submit(task, excluded={host})
+                    if not retried:
+                        on_task_done(task, None, host)
+                else:
+                    on_task_done(task, fragment, host)
+                break  # restart `while pending` so newly-submitted futures join the wait set
 
 
 # ---------------------------------------------------------------------------
