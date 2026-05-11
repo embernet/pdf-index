@@ -19,6 +19,7 @@ will say "Ollama not detected".
 from __future__ import annotations
 
 import platform
+import urllib.parse
 from dataclasses import dataclass
 from typing import Iterator
 
@@ -41,16 +42,37 @@ class SetupEvent:
     hint: str = ""
 
 
-def _install_hint() -> str:
-    sysname = platform.system()
-    if sysname == "Darwin":
-        return ("Install Ollama: `brew install ollama`, then run `ollama serve` "
-                "in a terminal — or download from https://ollama.com/download")
-    if sysname == "Linux":
-        return ("Install Ollama: `curl -fsSL https://ollama.com/install.sh | sh` "
-                "and run `ollama serve` — or see https://ollama.com/download")
-    return ("Install Ollama from https://ollama.com/download, then start the "
-            "Ollama service before retrying setup.")
+def _is_local_host(host: str) -> bool:
+    """True when *host* refers to this machine — used to pick install hints.
+
+    A bare hostname (no scheme) is treated as remote: people only type that
+    form when pointing at a named server.
+    """
+    if not host:
+        return True
+    h = host.strip()
+    if not h.startswith(("http://", "https://")):
+        return False
+    parsed = urllib.parse.urlparse(h)
+    name = (parsed.hostname or "").lower()
+    return name in ("localhost", "127.0.0.1", "::1", "")
+
+
+def _unreachable_hint(host: str) -> str:
+    if _is_local_host(host):
+        sysname = platform.system()
+        if sysname == "Darwin":
+            return ("Install Ollama: `brew install ollama`, then run `ollama serve` "
+                    "in a terminal — or download from https://ollama.com/download")
+        if sysname == "Linux":
+            return ("Install Ollama: `curl -fsSL https://ollama.com/install.sh | sh` "
+                    "and run `ollama serve` — or see https://ollama.com/download")
+        return ("Install Ollama from https://ollama.com/download, then start the "
+                "Ollama service before retrying setup.")
+    return (f"Could not reach {host}. On that machine, check that Ollama is "
+            "running and started with OLLAMA_HOST=0.0.0.0 (so it accepts "
+            "external connections), then verify the port (default 11434) is "
+            "not firewalled.")
 
 
 SMOKE_PROMPT = (
@@ -71,7 +93,7 @@ def run_setup(host: str, model: str) -> Iterator[SetupEvent]:
             message="Ollama server not reachable.",
             done=True,
             ok=False,
-            hint=_install_hint(),
+            hint=_unreachable_hint(host),
         )
         return
     yield SetupEvent(message="Server reachable.")

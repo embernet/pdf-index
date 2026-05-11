@@ -130,10 +130,10 @@ class MainController:
             lambda: self.save_current_config()
         )
         self.view.settings_sidebar.llm_host_edit.editingFinished.connect(
-            lambda: self.save_current_config()
+            self._on_llm_endpoint_changed
         )
         self.view.settings_sidebar.llm_model_edit.editingFinished.connect(
-            lambda: self.save_current_config()
+            self._on_llm_endpoint_changed
         )
         self.view.settings_sidebar.llm_setup_requested.connect(self.run_llm_setup)
         self.view.settings_sidebar.llm_status_check_requested.connect(
@@ -1636,6 +1636,17 @@ class MainController:
     # ------------------------------------------------------------------
     # LLM Enrichment (optional)
     # ------------------------------------------------------------------
+
+    def _on_llm_endpoint_changed(self):
+        """Save config and re-ping the server when host/model is edited.
+
+        Without the re-check the status label would still show "Ready" for
+        the previous endpoint, which is misleading after the user points
+        the app at a different Ollama (e.g. a remote GPU box).
+        """
+        self.save_current_config()
+        if self.view.settings_sidebar.llm_enrichment_chk.isChecked():
+            self.check_llm_status()
 
     def check_llm_status(self):
         """Update the sidebar status label based on Ollama reachability.

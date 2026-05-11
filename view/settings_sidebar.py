@@ -180,7 +180,9 @@ class SettingsSidebar(QWidget):
 
         self.llm_help_label = QLabel(
             "Outputs go to separate <book>.enhanced.* files. The current "
-            "rule-based index is never modified."
+            "rule-based index is never modified. Host can be local "
+            "(http://localhost:11434) or a remote Ollama server "
+            "(http://hostname:11434)."
         )
         self.llm_help_label.setStyleSheet("color: #777; font-size: 11px;")
         self.llm_help_label.setWordWrap(True)
@@ -190,6 +192,12 @@ class SettingsSidebar(QWidget):
         host_row.addWidget(QLabel("Host:"))
         self.llm_host_edit = QLineEdit("http://localhost:11434")
         self.llm_host_edit.setMinimumWidth(140)
+        self.llm_host_edit.setToolTip(
+            "URL of the Ollama server. Use http://localhost:11434 for a local "
+            "install, or http://hostname:11434 to use a remote machine "
+            "(useful when the remote has a GPU). The remote must be started "
+            "with OLLAMA_HOST=0.0.0.0 so it accepts external connections."
+        )
         host_row.addWidget(self.llm_host_edit, 1)
         layout.addLayout(host_row)
 
