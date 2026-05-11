@@ -10,6 +10,7 @@ unified-memory GPUs).
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import os
 import signal
 import socket
@@ -36,7 +37,11 @@ def detect_primary_ip() -> str:
         hostname = socket.gethostname()
         _, _, addrs = socket.gethostbyname_ex(hostname)
         for addr in addrs:
-            if not addr.startswith("127."):
+            try:
+                parsed = ipaddress.ip_address(addr)
+            except ValueError:
+                continue
+            if parsed.version == 4 and not parsed.is_loopback:
                 return addr
     except (socket.gaierror, OSError):
         pass
@@ -64,7 +69,7 @@ def is_port_ready(host: str, port: int, timeout: float = 1.0) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return 200 <= resp.status < 300
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
+    except (urllib.error.URLError, TimeoutError, OSError):
         return False
 
 

@@ -1,17 +1,16 @@
-import sys
-import os
 import socket
+import sys
+from pathlib import Path
 
-# Add scripts/ to path so we can import the module under test.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import run_ollama_cluster as cluster
+import run_ollama_cluster as cluster  # noqa: E402
 
 
 def test_detect_primary_ip_falls_back_to_localhost_on_lookup_failure(monkeypatch):
     def raise_gaierror(name):
         raise socket.gaierror("no DNS")
-    monkeypatch.setattr(socket, "gethostbyname_ex", lambda h: (_ for _ in ()).throw(socket.gaierror))
+    monkeypatch.setattr(socket, "gethostbyname_ex", raise_gaierror)
     assert cluster.detect_primary_ip() == "localhost"
 
 
