@@ -47,7 +47,7 @@ class ConfigManager:
         # Migrate legacy singular llm_host -> llm_hosts list when the new
         # key was absent from the on-disk file. Keep llm_host populated
         # too for one-cycle back-compat in case anything still reads it.
-        if "llm_hosts" not in data and "llm_host" in data:
+        if "llm_hosts" not in data and isinstance(data.get("llm_host"), str):
             config["llm_hosts"] = [data["llm_host"]]
         return config
 
