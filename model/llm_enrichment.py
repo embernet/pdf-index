@@ -116,6 +116,16 @@ def _occurrences_with_context(occurrences: List[tuple]) -> List[tuple]:
     return out
 
 
+def preflight_hosts(hosts: List[str], timeout: float = 2.0) -> List[str]:
+    """Return the subset of *hosts* that respond to a /api/tags ping.
+
+    Order is preserved so downstream assignment is deterministic. Hosts
+    that fail this check are excluded from the parallel pool and shown
+    in red in the UI for the duration of the run.
+    """
+    return [h for h in hosts if llm_client.is_available(h, timeout=timeout)]
+
+
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
