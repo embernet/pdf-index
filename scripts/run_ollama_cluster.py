@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import json
 import os
 import signal
 import socket
@@ -91,13 +92,17 @@ def spawn_instance(port: int, models_dir: str, num_parallel: int,
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"instance-{port}.log")
     log_file = open(log_path, "ab", buffering=0)
-    return subprocess.Popen(
-        ["ollama", "serve"],
-        env=build_instance_env(port, models_dir, num_parallel),
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            ["ollama", "serve"],
+            env=build_instance_env(port, models_dir, num_parallel),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+    return proc
 
 
 def wait_for_ready(ip: str, port: int, timeout_s: float = HEALTH_TIMEOUT_S) -> bool:
@@ -110,14 +115,13 @@ def wait_for_ready(ip: str, port: int, timeout_s: float = HEALTH_TIMEOUT_S) -> b
     return False
 
 
-def preload_model(ip: str, port: int, model: str, timeout_s: float = 600.0) -> bool:
+def preload_model(ip: str, port: int, model: str, timeout_s: float = 120.0) -> bool:
     """Force a model load by sending one trivial /api/generate request.
 
     Returns True if the request completed successfully (status 200), else
     False. Used to pay the model-load cost during cluster start instead
     of on the user's first real enrichment call.
     """
-    import json
     url = f"http://{ip}:{port}/api/generate"
     body = json.dumps({"model": model, "prompt": "hi", "stream": False}).encode("utf-8")
     req = urllib.request.Request(
@@ -156,18 +160,17 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def main(argv: List[str]) -> int:
     args = parse_args(argv)
+    if args.instances < 1:
+        print("error: --instances must be >= 1", file=sys.stderr)
+        return 2
     ports = [args.start_port + i for i in range(args.instances)]
     ip = detect_primary_ip()
     procs: List[Tuple[int, subprocess.Popen]] = []
+    ready_ports: List[int] = []
+    failed_ports: List[int] = []
 
-    print(f"Starting {args.instances} Ollama instance(s) on ports "
-          f"{ports[0]}..{ports[-1]} (NUM_PARALLEL={args.num_parallel})...")
-
-    for port in ports:
-        proc = spawn_instance(port, args.models_dir, args.num_parallel, args.log_dir)
-        procs.append((port, proc))
-
-    # Install a SIGINT handler so children are killed cleanly on Ctrl+C.
+    # Install signal handlers BEFORE spawning so a Ctrl+C during spawn
+    # still routes through the orderly shutdown path in `finally`.
     shutdown_requested = {"value": False}
 
     def _shutdown(signum, frame):
@@ -176,34 +179,42 @@ def main(argv: List[str]) -> int:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    ready_ports: List[int] = []
-    failed_ports: List[int] = []
-    for port, _ in procs:
-        if shutdown_requested["value"]:
-            break
-        if wait_for_ready(ip, port):
-            ready_ports.append(port)
-            print(f"  http://{ip}:{port} ready")
-        else:
-            failed_ports.append(port)
-            log_path = os.path.join(args.log_dir, f"instance-{port}.log")
-            print(f"  http://{ip}:{port} FAILED to come up — see {log_path}",
-                  file=sys.stderr)
-
-    if args.preload and ready_ports and not shutdown_requested["value"]:
-        print(f"Preloading model '{args.preload}' on {len(ready_ports)} instances...")
-        for port in ready_ports:
-            ok = preload_model(ip, port, args.preload)
-            status = "OK" if ok else "FAILED"
-            print(f"  http://{ip}:{port} preload {status}")
-
-    if ready_ports:
-        print()
-        print(format_summary(ip, ready_ports))
-        print()
-        print("Press Ctrl+C to stop the cluster.")
+    print(f"Starting {args.instances} Ollama instance(s) on ports "
+          f"{ports[0]}..{ports[-1]} (NUM_PARALLEL={args.num_parallel})...")
 
     try:
+        for port in ports:
+            proc = spawn_instance(port, args.models_dir, args.num_parallel, args.log_dir)
+            procs.append((port, proc))
+
+        for port, _ in procs:
+            if shutdown_requested["value"]:
+                break
+            if wait_for_ready(ip, port):
+                ready_ports.append(port)
+                print(f"  http://{ip}:{port} ready")
+            else:
+                failed_ports.append(port)
+                log_path = os.path.join(args.log_dir, f"instance-{port}.log")
+                print(f"  http://{ip}:{port} FAILED to come up — see {log_path}",
+                      file=sys.stderr)
+
+        if args.preload and ready_ports and not shutdown_requested["value"]:
+            print(f"Preloading model '{args.preload}' on {len(ready_ports)} instances...")
+            for port in ready_ports:
+                if shutdown_requested["value"]:
+                    break
+                print(f"  http://{ip}:{port} preloading...", flush=True)
+                ok = preload_model(ip, port, args.preload)
+                status = "OK" if ok else "FAILED"
+                print(f"  http://{ip}:{port} preload {status}")
+
+        if ready_ports:
+            print()
+            print(format_summary(ip, ready_ports))
+            print()
+            print("Press Ctrl+C to stop the cluster.")
+
         while not shutdown_requested["value"]:
             time.sleep(1.0)
             # Detect & report unexpected child deaths without aborting.
