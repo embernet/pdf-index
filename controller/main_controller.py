@@ -55,6 +55,17 @@ class MainController:
         self.view.settings_sidebar.radio_physical.toggled.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.radio_logical.toggled.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.offset_spin.valueChanged.connect(lambda: self.save_current_config())
+        # Keep the PDF viewer's Go-To-Page resolver in sync with the
+        # active strategy + offset.
+        self.view.settings_sidebar.radio_physical.toggled.connect(
+            lambda: self._push_page_numbering_to_viewer()
+        )
+        self.view.settings_sidebar.radio_logical.toggled.connect(
+            lambda: self._push_page_numbering_to_viewer()
+        )
+        self.view.settings_sidebar.offset_spin.valueChanged.connect(
+            lambda: self._push_page_numbering_to_viewer()
+        )
         self.view.settings_sidebar.index_from_offset_chk.toggled.connect(lambda: self.save_current_config())
         self.view.pdf_viewer.fit_page_chk.toggled.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.name_indexing_chk.toggled.connect(lambda: self.save_current_config())
@@ -62,6 +73,9 @@ class MainController:
         self.view.settings_sidebar.surname_first_chk.toggled.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.index_italic_chk.toggled.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.index_single_quotes_chk.toggled.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.single_quote_max_chars_spin.valueChanged.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.italic_max_chars_spin.valueChanged.connect(lambda: self.save_current_config())
+        self.view.settings_sidebar.bold_max_chars_spin.valueChanged.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.separate_style_files_chk.toggled.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.separate_style_files_chk.toggled.connect(
             lambda checked: self.view.controls_output.set_style_selector_enabled(checked)
@@ -209,6 +223,10 @@ class MainController:
         self.view.pdf_viewer.set_fit_page(config.get("fit_page", config.get("fit_width", True)))
         self.view.pdf_viewer.highlight_indexed_chk.setChecked(config.get("highlight_indexed", True))
         
+        # Sync strategy/offset to the viewer so Go-To-Page resolves
+        # printed labels under the project's active numbering.
+        self._push_page_numbering_to_viewer()
+
         # Load PDF
         pdf_name = config.get("pdf_filename")
         if pdf_name:
@@ -265,6 +283,16 @@ class MainController:
         if mode in ("tag_cloud", "index_cloud"):
             self._generate_cloud_for_submode()
 
+    def _push_page_numbering_to_viewer(self):
+        """Forward the active strategy + offset to the PDF viewer so its
+        Go-To-Page input resolves printed labels (incl. offset) rather
+        than treating the input as a raw physical page number."""
+        sidebar = self.view.settings_sidebar
+        self.view.pdf_viewer.set_page_numbering(
+            sidebar.get_strategy(),
+            sidebar.get_offset(),
+        )
+
     def save_current_config(self):
         if not self.project_path:
             return
@@ -289,6 +317,9 @@ class MainController:
             "surname_first": sidebar.surname_first_chk.isChecked(),
             "index_italic": sidebar.index_italic_chk.isChecked(),
             "index_single_quotes": sidebar.index_single_quotes_chk.isChecked(),
+            "single_quote_max_chars": sidebar.single_quote_max_chars_spin.value(),
+            "italic_max_chars": sidebar.italic_max_chars_spin.value(),
+            "bold_max_chars": sidebar.bold_max_chars_spin.value(),
             "separate_style_files": sidebar.separate_style_files_chk.isChecked(),
             "index_front_matter_roman": sidebar.index_front_matter_chk.isChecked(),
             "style_view": ctrl.get_style_view(),
@@ -646,6 +677,9 @@ class MainController:
         index_italic = self.view.settings_sidebar.index_italic_chk.isChecked()
         index_capitalised = self.view.settings_sidebar.index_capitalised_chk.isChecked()
         index_single_quotes = self.view.settings_sidebar.index_single_quotes_chk.isChecked()
+        single_quote_max_chars = self.view.settings_sidebar.single_quote_max_chars_spin.value()
+        italic_max_chars = self.view.settings_sidebar.italic_max_chars_spin.value()
+        bold_max_chars = self.view.settings_sidebar.bold_max_chars_spin.value()
 
         self.view.settings_sidebar.create_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -691,6 +725,9 @@ class MainController:
                 index_capitalised=index_capitalised,
                 index_single_quotes=index_single_quotes,
                 index_front_matter=index_front_matter,
+                single_quote_max_chars=single_quote_max_chars,
+                italic_max_chars=italic_max_chars,
+                bold_max_chars=bold_max_chars,
             )
             self.name_indexing_thread.progress_updated.connect(
                 self.view.set_progress

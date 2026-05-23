@@ -211,6 +211,13 @@ class StyledToken:
     is_superscript: bool
     is_all_caps: bool = False           # True if the token alone is all-caps (>=2 letters)
     from_all_caps_line: bool = False    # True if the line containing this token is fully all-caps
+    # True for the synthetic "." tokens that extract_styled_tokens inserts
+    # at paragraph / short-line / block boundaries to model structural
+    # breaks. Real periods inside body text leave this False. Used by
+    # the quoted-phrase extractor to break long runs that would
+    # otherwise straddle a layout boundary (e.g. an entire TOC
+    # accidentally enclosed in ‘…’).
+    is_separator: bool = False
 
 
 @dataclass
@@ -510,7 +517,7 @@ def extract_styled_tokens(page) -> List[StyledToken]:
             if insert_sep:
                 tokens.append(StyledToken(
                     text=".", is_bold=False, is_italic=False,
-                    is_superscript=False,
+                    is_superscript=False, is_separator=True,
                 ))
 
         block_lines = block.get("lines", [])
@@ -598,7 +605,7 @@ def extract_styled_tokens(page) -> List[StyledToken]:
                         if not suppress:
                             tokens.append(StyledToken(
                                 text=".", is_bold=False, is_italic=False,
-                                is_superscript=False,
+                                is_superscript=False, is_separator=True,
                             ))
 
         prev_block = block
@@ -1015,7 +1022,9 @@ def extract_names_from_tokens(
     return names
 
 
-def extract_bold_phrases(tokens: List[StyledToken]) -> List[str]:
+def extract_bold_phrases(
+    tokens: List[StyledToken], max_chars: Optional[int] = None
+) -> List[str]:
     """Walk *tokens* and emit runs of bold-styled tokens as phrases.
 
     Mirrors extract_italic_phrases but is more permissive about word
@@ -1025,11 +1034,16 @@ def extract_bold_phrases(tokens: List[StyledToken]) -> List[str]:
     is dropped here — words like 'note', 'index', 'see' should not
     break a bold run when used in their everyday sense.
 
-    A bold run is broken by punctuation, by the bold flag turning off,
-    by footnote references, by roman numerals, and by number-like
-    tokens. Title prefixes (Dr, Mr, Mrs, Sir, ...) are skipped without
-    breaking the run. Lone single-token runs that are just stop words
-    are dropped on flush.
+    Within a continuous bold run, terminal punctuation, footnote refs,
+    roman numerals (except "I"), and number-like tokens flush the
+    current segment. Title prefixes are skipped without breaking.
+
+    Enclosure-level size gate (*max_chars*): each continuous bold run
+    (bold-on … bold-off) is treated as one enclosure. When its joined
+    character length exceeds the cap, EVERY segment captured from that
+    run is dropped — the bold-indexing rule is cancelled for that run
+    so the text falls through to the other extractors. Pass 0 or None
+    to disable the gate.
 
     Used when the 'Index Bold Text' option is on, so that a bold
     annotation like '**A note on proximity**' becomes its own entry
@@ -1037,14 +1051,24 @@ def extract_bold_phrases(tokens: List[StyledToken]) -> List[str]:
     """
     phrases: List[str] = []
     current: List[str] = []
+    pending_phrases: List[str] = []
+    enclosure_words: List[str] = []
 
-    def flush():
+    def flush_segment():
         if current:
-            if len(current) == 1 and current[0].lower() in DEFAULT_STOPWORDS:
-                current.clear()
-                return
-            phrases.append(_join_ngram_strip_terminal_possessive(current))
+            if not (len(current) == 1 and current[0].lower() in DEFAULT_STOPWORDS):
+                pending_phrases.append(_join_ngram_strip_terminal_possessive(current))
             current.clear()
+
+    def commit_enclosure():
+        nonlocal pending_phrases, enclosure_words
+        total = len(" ".join(enclosure_words))
+        if (max_chars is None or max_chars <= 0
+                or total <= max_chars):
+            phrases.extend(pending_phrases)
+        pending_phrases = []
+        enclosure_words = []
+        current.clear()
 
     for token in tokens:
         word = token.text.strip()
@@ -1052,79 +1076,107 @@ def extract_bold_phrases(tokens: List[StyledToken]) -> List[str]:
             continue
 
         if not token.is_bold:
-            flush()
+            flush_segment()
+            commit_enclosure()
             continue
 
         # Skip whole all-caps lines (chapter headings rendered in bold).
         if token.from_all_caps_line:
-            flush()
+            flush_segment()
+            commit_enclosure()
             continue
 
         if token.is_superscript and _is_footnote_ref(word):
-            flush()
+            flush_segment()
             continue
 
         if _is_punctuation(word):
-            # Only terminal punctuation breaks the run; commas, parens,
-            # and dashes stay inside.
+            # Only terminal punctuation breaks the segment; commas,
+            # parens, and dashes stay inside.
             if any(ch in TERMINAL_PUNCT_CHARS for ch in word):
-                flush()
+                flush_segment()
             continue
 
         # Possessive 's is preserved when mid-phrase (e.g. an italic-styled
         # title like 'Adam Gorb's Ballade'); stripped only on the final word
-        # of the captured run via flush().
+        # of the captured run via flush_segment().
 
         if word.lower().rstrip('.') in TITLE_PREFIXES:
             continue
 
-        if _is_roman_numeral(word):
-            flush()
+        # Single "I" matches the Roman-numeral pattern but in italic /
+        # bold / quoted running prose it is the English pronoun. Treat it
+        # as an ordinary word so phrases like italic "I am still learning"
+        # or quoted "Yes, I am happy..." keep the "I". Multi-letter Roman
+        # numerals (II, III, IV, ...) still break the run.
+        if word != "I" and _is_roman_numeral(word):
+            flush_segment()
             continue
 
         if _is_number_like(word):
-            flush()
+            flush_segment()
             continue
 
         current.append(word)
+        enclosure_words.append(word)
 
-    flush()
+    flush_segment()
+    commit_enclosure()
     return phrases
 
 
-def extract_italic_phrases(tokens: List[StyledToken]) -> List[str]:
+def extract_italic_phrases(
+    tokens: List[StyledToken], max_chars: Optional[int] = None
+) -> List[str]:
     """Walk *tokens* and emit runs of italic-styled tokens as phrases.
 
     Rules:
     - A run starts at the first italic-styled word token and continues
       while subsequent tokens are also italic.
-    - Punctuation flushes the run.
-    - Structural words (Chapter, Section, ...) flush the run — they only
-      appear in italic by accident.
-    - Connector words (and, of, to, ...) extend the run, since titles
+    - Punctuation (terminal: .?!;:) flushes the current segment.
+    - Structural words (Chapter, Section, ...) flush the segment — they
+      only appear in italic by accident.
+    - Connector words (and, of, to, ...) extend the segment, since titles
       legitimately contain them ("The Sound of Music").
     - Title prefixes (Dr, Mr, Mrs, Sir, ...) are skipped without breaking
-      the run, mirroring extract_names_from_tokens. This prevents
+      the segment, mirroring extract_names_from_tokens. This prevents
       "*Dr Edmund Crawley*" from producing a separate italic entry that
       duplicates the name pass's "Edmund Crawley".
-    - Roman numerals, footnote refs, and pure-number tokens are skipped
-      without breaking the run (mirrors extract_names_from_tokens behaviour).
-    - Possessive suffixes are stripped before adding to the run.
-    - A captured run consisting of a single token that is itself a stop
-      word ("the", "a", "every", "some", ...) is dropped, since lone
-      italic stop words are almost never legitimate index entries.
+    - Roman numerals (other than "I"), footnote refs, and pure-number
+      tokens flush the segment (mirrors extract_names_from_tokens
+      behaviour).
+    - Possessive suffixes are stripped before adding to the segment.
+    - A captured segment consisting of a single token that is itself a
+      stop word ("the", "a", "every", "some", ...) is dropped.
+
+    Enclosure-level size gate (*max_chars*): each continuous italic run
+    (italic-on … italic-off) is treated as one enclosure. When its
+    joined character length exceeds the cap, EVERY segment captured
+    from that run is dropped — the italic-indexing rule is cancelled
+    for that run so the text falls through to the other extractors.
+    Pass 0 or None to disable the gate.
     """
     phrases: List[str] = []
     current: List[str] = []
+    pending_phrases: List[str] = []
+    enclosure_words: List[str] = []
 
-    def flush():
+    def flush_segment():
         if current:
-            # Drop a single-token run that is just a stop word.
-            if len(current) == 1 and current[0].lower() in DEFAULT_STOPWORDS:
-                current.clear()
-                return
-            phrases.append(_join_ngram_strip_terminal_possessive(current))
+            # Drop a single-token segment that is just a stop word.
+            if not (len(current) == 1 and current[0].lower() in DEFAULT_STOPWORDS):
+                pending_phrases.append(_join_ngram_strip_terminal_possessive(current))
             current.clear()
+
+    def commit_enclosure():
+        nonlocal pending_phrases, enclosure_words
+        total = len(" ".join(enclosure_words))
+        if (max_chars is None or max_chars <= 0
+                or total <= max_chars):
+            phrases.extend(pending_phrases)
+        pending_phrases = []
+        enclosure_words = []
+        current.clear()
 
     for token in tokens:
         word = token.text.strip()
@@ -1132,52 +1184,64 @@ def extract_italic_phrases(tokens: List[StyledToken]) -> List[str]:
             continue
 
         if not token.is_italic:
-            flush()
+            flush_segment()
+            commit_enclosure()
             continue
 
         # Skip whole all-caps lines (e.g. an italic-styled chapter heading).
         if token.from_all_caps_line:
-            flush()
+            flush_segment()
+            commit_enclosure()
             continue
 
         if token.is_superscript and _is_footnote_ref(word):
-            flush()
+            flush_segment()
             continue
 
         if _is_punctuation(word):
-            # Only terminal punctuation breaks the run; commas, parens,
-            # and dashes stay inside.
+            # Only terminal punctuation breaks the segment; commas,
+            # parens, and dashes stay inside.
             if any(ch in TERMINAL_PUNCT_CHARS for ch in word):
-                flush()
+                flush_segment()
             continue
 
         # Possessive 's is preserved when mid-phrase; stripped only on the
-        # final word of the captured run via flush().
+        # final word of the captured run via flush_segment().
 
         if word.lower() in STRUCTURAL_WORDS:
-            flush()
+            flush_segment()
             continue
 
         # Title prefixes (Dr, Mr, Mrs, ...) are skipped without breaking
-        # the run, so an italic "Dr Edmund Crawley" yields "Edmund Crawley".
+        # the segment, so an italic "Dr Edmund Crawley" yields
+        # "Edmund Crawley".
         if word.lower().rstrip('.') in TITLE_PREFIXES:
             continue
 
-        if _is_roman_numeral(word):
-            flush()
+        # Single "I" matches the Roman-numeral pattern but in italic /
+        # bold / quoted running prose it is the English pronoun. Treat it
+        # as an ordinary word so phrases like italic "I am still learning"
+        # or quoted "Yes, I am happy..." keep the "I". Multi-letter Roman
+        # numerals (II, III, IV, ...) still break the run.
+        if word != "I" and _is_roman_numeral(word):
+            flush_segment()
             continue
 
         if _is_number_like(word):
-            flush()
+            flush_segment()
             continue
 
         current.append(word)
+        enclosure_words.append(word)
 
-    flush()
+    flush_segment()
+    commit_enclosure()
     return phrases
 
 
-def extract_quoted_phrases(tokens: List[StyledToken]) -> List[str]:
+def extract_quoted_phrases(
+    tokens: List[StyledToken], max_chars: Optional[int] = None
+) -> List[str]:
     """Walk *tokens* and emit phrases enclosed in single curly quotes
     (U+2018 ... U+2019).
 
@@ -1187,31 +1251,69 @@ def extract_quoted_phrases(tokens: List[StyledToken]) -> List[str]:
     end the run, because the rule only fires when ’ appears as a standalone
     punctuation token between word tokens.
 
-    Within a quoted run, the same filters as the italic/bold passes apply:
-    structural-word, footnote-ref, roman-numeral, and number-like tokens
-    flush the run; punctuation is ignored but does NOT split the run;
-    title prefixes (Dr, Mr, ...) are skipped without breaking. Tokens on
-    a fully all-caps line are skipped — a heading rendered with quoted
-    text is unusual but possible.
+    Core invariant: a quoted span ‘…’ is ONE literal phrase. Once the
+    opening ‘ has been seen, the ONLY token that ends the captured run
+    is the matching closing ’. No internal token — punctuation, year
+    digit, Roman numeral, structural word, nested curly double quote,
+    footnote reference, or all-caps line artefact — may flush the run
+    and produce sub-entries. The captured text is the verbatim quote,
+    minus pure-punctuation tokens and any superscript footnote markers.
 
-    Important precedence: the enclosing single quotes define one literal
-    phrase span. Internal sentence punctuation must not create partial
-    sub-entries (for example splitting a quoted sentence into several
-    smaller phrases).
+    Skipping rules inside a quoted run (skip the token, do NOT flush):
+      - punctuation (commas, periods, dashes, nested curly "…", etc.)
+      - superscript footnote references (e.g. a "75" set as a footnote
+        marker mid-quote — a PDF artefact, not part of the quote)
+      - tokens from a fully all-caps line (rare inside quotes, but
+        guard against it)
+      - title prefixes (Dr, Mr, Mrs, Sir, ...) — kept skipped to
+        match the existing convention for stripped titles
+
+    Synthetic structural separators (the ``is_separator`` "." that
+    extract_styled_tokens inserts at paragraph / short-line / block
+    boundaries) DO flush the segment, so a ‘…’ that accidentally spans
+    a layout break fragments per line.
+
+    Possessive 's is preserved: titles like 'Chetham's Piano Summer
+    School' are captured verbatim, unlike the general name-extraction
+    pass which canonicalises by stripping the terminal possessive.
+
+    Enclosure-level size gate (*max_chars*): when set to a positive
+    value, the joined character length of the WHOLE ‘…’ span is checked
+    on close — if it exceeds the cap, every fragment from that
+    enclosure is dropped. The rule applies to the entire enclosed
+    chunk: oversized quoted spans are ignored as quoted phrases (other
+    extractors continue to see the same tokens). Pass 0 or None to
+    disable the gate.
 
     A single-token run that is just a stop word is dropped on flush.
     """
     phrases: List[str] = []
     current: List[str] = []
+    # Per-enclosure buffer: fragments are held here until the closing ’
+    # passes the size gate, only then committed to *phrases*.
+    pending_phrases: List[str] = []
+    enclosure_words: List[str] = []
     in_quote = False
 
-    def flush():
+    def flush_segment():
+        # Move the current word segment into the enclosure's pending
+        # fragment list (not yet committed to *phrases*).
         if current:
-            if len(current) == 1 and current[0].lower() in DEFAULT_STOPWORDS:
-                current.clear()
-                return
-            phrases.append(" ".join(current))
+            if not (len(current) == 1 and current[0].lower() in DEFAULT_STOPWORDS):
+                pending_phrases.append(" ".join(current))
             current.clear()
+
+    def commit_enclosure():
+        # Decide whether to keep this enclosure's fragments and reset
+        # the per-enclosure state either way.
+        nonlocal pending_phrases, enclosure_words
+        total_len = len(" ".join(enclosure_words))
+        if (max_chars is None or max_chars <= 0
+                or total_len <= max_chars):
+            phrases.extend(pending_phrases)
+        pending_phrases = []
+        enclosure_words = []
+        current.clear()
 
     for token in tokens:
         word = token.text.strip()
@@ -1221,51 +1323,60 @@ def extract_quoted_phrases(tokens: List[StyledToken]) -> List[str]:
         # Open / close detection. Both curly variants act as paired
         # delimiters; a stray closing quote without an open is ignored.
         if word == "‘":
-            flush()
+            # If a previous enclosure was never closed, drop its state —
+            # a fresh ‘ effectively cancels the half-built one rather
+            # than letting it leak forward.
+            pending_phrases = []
+            enclosure_words = []
+            current.clear()
             in_quote = True
             continue
         if word == "’":
-            flush()
-            in_quote = False
+            if in_quote:
+                flush_segment()
+                commit_enclosure()
+                in_quote = False
             continue
 
         if not in_quote:
             continue
 
+        # Synthetic structural separators (extract_styled_tokens inserts
+        # these at paragraph / short-line / block boundaries) carve the
+        # enclosed text into per-line fragments. Real periods inside
+        # body text leave is_separator False and are handled by the
+        # punctuation branch below.
+        if token.is_separator:
+            flush_segment()
+            continue
+
+        # Inside a quoted run, nothing else flushes except the closing ’.
+        # The cases below skip the token (omit it from the captured text)
+        # but must NOT split the phrase into sub-entries.
+
         if token.from_all_caps_line:
-            flush()
             continue
 
         if token.is_superscript and _is_footnote_ref(word):
-            flush()
             continue
 
         if _is_punctuation(word):
             continue
 
-        # The quoted-title rule captures literal proper names — Chetham's
-        # Piano Summer School, A Reader's Companion — so the possessive 's
-        # is part of the title and must be preserved (unlike the general
-        # name-extraction pass which canonicalises by stripping it).
-
-        if word.lower() in STRUCTURAL_WORDS:
-            flush()
-            continue
-
         if word.lower().rstrip('.') in TITLE_PREFIXES:
             continue
 
-        if _is_roman_numeral(word):
-            flush()
-            continue
-
-        if _is_number_like(word):
-            flush()
-            continue
-
+        # Numbers (years, page refs), Roman numerals (I, II, Vol III, ...)
+        # and structural words (Chapter, Section, ...) are all VERBATIM
+        # parts of the quote and are kept — they must not split the run.
         current.append(word)
+        enclosure_words.append(word)
 
-    flush()
+    # NOTE: no trailing flush. An unclosed ‘ (no matching ’ on this page)
+    # silently drops its accumulated tokens — emitting them as a phrase
+    # would produce TOC-like garbage when a stray opening quote runs to
+    # end of page. A quoted span only counts when both delimiters are
+    # present.
     return phrases
 
 
@@ -1745,7 +1856,9 @@ class NameIndexingThread(QThread):
                  include_bold=False, exclude_words=None, stopwords=None,
                  name_type_overrides=None, start_page=0, surname_first=False,
                  index_italic=True, index_capitalised=True,
-                 index_single_quotes=True, index_front_matter=False):
+                 index_single_quotes=True, index_front_matter=False,
+                 single_quote_max_chars=100, italic_max_chars=100,
+                 bold_max_chars=100):
         super().__init__()
         self.pdf_path = pdf_path
         self.strategy = page_numbering_strategy
@@ -1761,6 +1874,9 @@ class NameIndexingThread(QThread):
         self.index_capitalised = index_capitalised
         self.index_single_quotes = index_single_quotes
         self.index_front_matter = index_front_matter
+        self.single_quote_max_chars = single_quote_max_chars
+        self.italic_max_chars = italic_max_chars
+        self.bold_max_chars = bold_max_chars
 
     def run(self):
         try:
@@ -1820,15 +1936,21 @@ class NameIndexingThread(QThread):
                         cap_observations[cleaned].append(flags)
 
                 if self.index_italic:
-                    italic_raw = extract_italic_phrases(tokens)
+                    italic_raw = extract_italic_phrases(
+                        tokens, max_chars=self.italic_max_chars,
+                    )
                     italic_vocab.update(filter_names(italic_raw))
 
                 if self.include_bold:
-                    bold_raw = extract_bold_phrases(tokens)
+                    bold_raw = extract_bold_phrases(
+                        tokens, max_chars=self.bold_max_chars,
+                    )
                     bold_vocab.update(filter_names(bold_raw))
 
                 if self.index_single_quotes:
-                    quoted_raw = extract_quoted_phrases(tokens)
+                    quoted_raw = extract_quoted_phrases(
+                        tokens, max_chars=self.single_quote_max_chars,
+                    )
                     quoted_vocab.update(filter_names(quoted_raw))
 
                 progress = int((loop_idx + 1) / max(indexable, 1) * 30)
@@ -1946,7 +2068,9 @@ class NameIndexingThread(QThread):
                         seen_flags_by_name[name] = merge_flags(seen_flags_by_name[name], flags)
 
                 if self.index_italic:
-                    italic_phrases = extract_italic_phrases(tokens)
+                    italic_phrases = extract_italic_phrases(
+                        tokens, max_chars=self.italic_max_chars,
+                    )
                     italic_clean = filter_names(italic_phrases)
                     for phrase in italic_clean:
                         italic_flags = {
@@ -1961,7 +2085,9 @@ class NameIndexingThread(QThread):
                             seen_flags_by_name[phrase] = italic_flags
 
                 if self.include_bold:
-                    bold_phrases = extract_bold_phrases(tokens)
+                    bold_phrases = extract_bold_phrases(
+                        tokens, max_chars=self.bold_max_chars,
+                    )
                     bold_clean = filter_names(bold_phrases)
                     for phrase in bold_clean:
                         bold_flags = {
@@ -1976,7 +2102,9 @@ class NameIndexingThread(QThread):
                             seen_flags_by_name[phrase] = bold_flags
 
                 if self.index_single_quotes:
-                    quoted_phrases = extract_quoted_phrases(tokens)
+                    quoted_phrases = extract_quoted_phrases(
+                        tokens, max_chars=self.single_quote_max_chars,
+                    )
                     quoted_clean = filter_names(quoted_phrases)
                     for phrase in quoted_clean:
                         quoted_flags = {

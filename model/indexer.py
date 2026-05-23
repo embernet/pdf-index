@@ -61,6 +61,28 @@ def label_for_page(page, physical_page_number: int, strategy: str,
     return str(physical_page_number + offset)
 
 
+def resolve_label_to_index(input_text: str, labels) -> int | None:
+    """Map a user-entered printed-page label to a 0-based physical index.
+
+    *labels* is a sequence of label strings, one per physical page, as
+    produced by :func:`label_for_page` for the active strategy / offset.
+    Returns the index of the FIRST exact match (case-insensitive — so
+    'iii' matches a label rendered as 'III' or vice versa) or None if no
+    label matches the trimmed input.
+
+    Empty or whitespace-only input returns None.
+    """
+    if input_text is None:
+        return None
+    target = input_text.strip().lower()
+    if not target:
+        return None
+    for i, label in enumerate(labels):
+        if label is not None and label.lower() == target:
+            return i
+    return None
+
+
 EMPTY_FLAGS = {
     "italic": False,
     "bold": False,

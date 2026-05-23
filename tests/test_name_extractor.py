@@ -115,6 +115,64 @@ def test_extract_italic_keeps_stop_word_in_phrase():
     assert "the polonaise" in out
 
 
+def test_extract_italic_keeps_pronoun_I_in_phrase():
+    # "I" matches the Roman-numeral regex but in running prose it is the
+    # English pronoun and must not break an italic run.
+    tokens = _tokens("I am still learning", italic=True)
+    out = extract_italic_phrases(tokens)
+    assert "I am still learning" in out
+
+
+def test_extract_italic_drops_whole_run_over_cap():
+    """A continuous italic span whose total length exceeds *max_chars*
+    is dropped wholesale — no per-segment captures survive. Other
+    extractors still see the same tokens.
+    """
+    # Joined text is well over 100 chars and contains no segment-
+    # flushing punctuation, so the whole run forms one enclosure.
+    long_words = (
+        "this is a long italic passage that goes on well past one hundred "
+        "characters in total length easily and emphatically"
+    )
+    tokens = _tokens(long_words, italic=True)
+    assert len(long_words) > 100  # guard the precondition
+    out = extract_italic_phrases(tokens, max_chars=100)
+    assert out == [], f"expected drop, got {out!r}"
+
+
+def test_extract_italic_keeps_run_under_cap():
+    """A short italic span passes the cap and is captured normally."""
+    tokens = _tokens("War and Peace", italic=True)
+    out = extract_italic_phrases(tokens, max_chars=100)
+    assert "War and Peace" in out
+
+
+def test_extract_italic_cap_isolates_runs():
+    """One short and one long italic span on a page: short kept, long
+    dropped, with non-italic text separating them.
+    """
+    long_words = (
+        "ridiculously long italic monologue that just keeps going and "
+        "going past one hundred characters easily emphatically clearly"
+    )
+    assert len(long_words) > 100  # guard
+    long_italic = _tokens(long_words, italic=True)
+    tokens = (
+        _tokens("Pride and Prejudice", italic=True)
+        + _tokens("plain text in between", italic=False)
+        + long_italic
+    )
+    out = extract_italic_phrases(tokens, max_chars=100)
+    assert "Pride and Prejudice" in out
+    assert not any("monologue" in p for p in out)
+
+
+def test_extract_italic_cap_zero_or_none_disables():
+    tokens = _tokens("x " * 100, italic=True)
+    assert extract_italic_phrases(tokens, max_chars=0)
+    assert extract_italic_phrases(tokens, max_chars=None)
+
+
 def _bold_tokens(text: str):
     """Like _tokens but with bold styling instead of italic."""
     out = []
@@ -145,6 +203,29 @@ def test_extract_bold_phrase_drops_lone_stop_word():
     tokens = _bold_tokens("the")
     out = extract_bold_phrases(tokens)
     assert out == []
+
+
+def test_extract_bold_drops_whole_run_over_cap():
+    from model.name_indexer import extract_bold_phrases
+    long_bold = _bold_tokens(
+        "very long bold block annotation that just keeps going past the configured one hundred character ceiling"
+    )
+    out = extract_bold_phrases(long_bold, max_chars=100)
+    assert out == [], f"expected drop, got {out!r}"
+
+
+def test_extract_bold_keeps_run_under_cap():
+    from model.name_indexer import extract_bold_phrases
+    tokens = _bold_tokens("A note on proximity")
+    out = extract_bold_phrases(tokens, max_chars=100)
+    assert "A note on proximity" in out
+
+
+def test_extract_bold_cap_zero_or_none_disables():
+    from model.name_indexer import extract_bold_phrases
+    tokens = _bold_tokens("x " * 100)
+    assert extract_bold_phrases(tokens, max_chars=0)
+    assert extract_bold_phrases(tokens, max_chars=None)
 
 
 def test_extract_bold_phrase_skips_non_bold():
@@ -343,6 +424,279 @@ def test_extract_quoted_still_closes_on_real_closing_quote():
     assert "Title Here" in out
     # Importantly, "Other" must NOT have been absorbed into the run.
     assert not any("Other" in p for p in out)
+
+
+def _plain_token(text):
+    """Build a single plain word token (no styling, no caps line)."""
+    return StyledToken(
+        text=text, is_bold=False, is_italic=False, is_superscript=False,
+        is_all_caps=text.isupper() and len(text) > 1, from_all_caps_line=False,
+    )
+
+
+def test_extract_quoted_does_not_split_on_year_numbers():
+    """Numbers inside a quoted run must NOT split it — the whole quote
+    is one literal phrase. Real-world failure from p.272: a long quote
+    containing '2023' and '2001' produced three fragmented entries.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("In", italic=False)
+        + [_plain_token("2023")]
+        + [_quote_token(",")]
+        + _tokens("as in the first course back in", italic=False)
+        + [_plain_token("2001")]
+        + [_quote_token(",")]
+        + _tokens("CIPSS is a celebration", italic=False)
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert out == [
+        "In 2023 as in the first course back in 2001 CIPSS is a celebration"
+    ]
+
+
+def test_extract_quoted_does_not_split_on_roman_numeral():
+    """A multi-letter Roman numeral (II, III, IV) inside a quoted span
+    must not split it — the quote is one literal phrase.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("Volume", italic=False)
+        + [_plain_token("II")]
+        + _tokens("of the series", italic=False)
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert out == ["Volume II of the series"]
+
+
+def test_extract_quoted_does_not_split_on_structural_word():
+    """A structural word ('Chapter', 'Section', 'Volume', ...) inside a
+    quoted span is part of the literal quote, not a structural marker —
+    it must not split the run.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("See Chapter Three for details", italic=False)
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert out == ["See Chapter Three for details"]
+
+
+def test_extract_quoted_does_not_split_on_nested_double_quotes():
+    """Nested curly double quotes ("…") inside a single-quoted span are
+    just punctuation — they must not split the run.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("strapline is", italic=False)
+        + [_quote_token(",")]
+        + [_quote_token("“")]  # opening curly double quote
+        + _tokens("the friendliest summer school in the world", italic=False)
+        + [_quote_token("”")]  # closing curly double quote
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert out == ["strapline is the friendliest summer school in the world"]
+
+
+def test_extract_quoted_skips_footnote_ref_without_splitting():
+    """A superscript footnote reference inside a quoted span is skipped
+    (not included in the phrase) but must NOT split the run.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("A celebrated", italic=False)
+        + [StyledToken(text="75", is_bold=False, is_italic=False,
+                        is_superscript=True, is_all_caps=False,
+                        from_all_caps_line=False)]
+        + _tokens("performance indeed", italic=False)
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert out == ["A celebrated performance indeed"]
+
+
+def test_extract_quoted_flushes_on_synthetic_separator():
+    """A quoted run that crosses a paragraph boundary (synthetic '.'
+    inserted by extract_styled_tokens between short / non-wrapping
+    lines) must flush — otherwise an unrelated multi-line layout such
+    as a table of contents enclosed in ‘…’ produces one giant entry
+    concatenating every line.
+
+    Real periods inside body text do NOT set is_separator and so do not
+    flush — preserving the p.272 long-quote case.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    sep = StyledToken(
+        text=".", is_bold=False, is_italic=False, is_superscript=False,
+        is_all_caps=False, from_all_caps_line=False, is_separator=True,
+    )
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("And Still Practising", italic=False)
+        + [_plain_token("299"), sep]
+        + _tokens("Friday a m", italic=False)
+        + [_plain_token("305"), sep]
+        + _tokens("Postscript CIPSS recognition", italic=False)
+        + [_plain_token("309")]
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    # Each synthetic separator breaks the run — the three TOC entries
+    # become three separate phrases instead of one concatenated blob.
+    assert "And Still Practising 299" in out
+    assert "Friday a m 305" in out
+    assert "Postscript CIPSS recognition 309" in out
+    # And critically, NOT one big concatenated phrase.
+    assert not any(
+        "And Still Practising 299 Friday" in p for p in out
+    ), f"separator should have broken the run, got {out!r}"
+
+
+def test_extract_quoted_drops_whole_enclosure_when_over_cap():
+    """An entire ‘…’ enclosure whose joined text exceeds *max_chars* must
+    emit NO phrases — not even the per-line fragments that the synthetic
+    separator would otherwise carve out. The whole quoted chunk is
+    ignored as a quoted phrase; other extractors run independently on
+    the same tokens.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    sep = StyledToken(
+        text=".", is_bold=False, is_italic=False, is_superscript=False,
+        is_all_caps=False, from_all_caps_line=False, is_separator=True,
+    )
+    # Build a schedule-like enclosure whose total joined length exceeds
+    # the cap; without the rule, the separators would yield three
+    # fragments each under the cap (which used to leak through).
+    tokens = (
+        [_quote_token("‘")]
+        + [_plain_token("11"), _plain_token("00")]
+        + _tokens("Live morning coffee and announcements", italic=False)
+        + [sep]
+        + _tokens("with Murray and Kathryn", italic=False)
+        + [sep]
+        + _tokens("Join Zoom Meeting url", italic=False)
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens, max_chars=60)
+    assert out == [], f"expected no captures for over-cap enclosure, got {out!r}"
+
+
+def test_extract_quoted_keeps_whole_enclosure_when_under_cap():
+    """A ‘…’ enclosure under the cap emits its per-line fragments
+    normally (synthetic separators still carve them out).
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    sep = StyledToken(
+        text=".", is_bold=False, is_italic=False, is_superscript=False,
+        is_all_caps=False, from_all_caps_line=False, is_separator=True,
+    )
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("First short", italic=False)
+        + [sep]
+        + _tokens("Second short", italic=False)
+        + [_quote_token("’")]
+    )
+    # Total joined text is "First short Second short" = 24 chars, under 100.
+    out = extract_quoted_phrases(tokens, max_chars=100)
+    assert "First short" in out
+    assert "Second short" in out
+
+
+def test_extract_quoted_cap_zero_disables():
+    """max_chars=0 (or None) disables the size check; long enclosures
+    still emit their fragments (matching previous default behaviour).
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("x " * 200, italic=False)  # very long
+        + [_quote_token("’")]
+    )
+    out_zero = extract_quoted_phrases(tokens, max_chars=0)
+    out_none = extract_quoted_phrases(tokens, max_chars=None)
+    assert out_zero, "max_chars=0 should not gate anything"
+    assert out_none, "max_chars=None should not gate anything"
+
+
+def test_extract_quoted_cap_isolates_each_enclosure():
+    """Two enclosures on the same page: the over-cap one is dropped
+    wholesale, the under-cap one still emits.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        # Short, kept
+        [_quote_token("‘")]
+        + _tokens("Short keeper", italic=False)
+        + [_quote_token("’")]
+        + _tokens("intervening text", italic=False)
+        # Long, dropped
+        + [_quote_token("‘")]
+        + _tokens(
+            "x" + " y" * 80,  # >>100 chars
+            italic=False,
+        )
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens, max_chars=100)
+    assert "Short keeper" in out
+    assert not any(len(p) > 100 for p in out)
+    # The long enclosure produced nothing — neither whole nor fragments.
+    assert all("y y y y" not in p for p in out)
+
+
+def test_extract_quoted_drops_unclosed_run_at_end_of_page():
+    """An opening ‘ with no matching ’ on the page must NOT emit a
+    phrase — otherwise stray decorative quote marks accumulate every
+    word that follows up to end-of-page.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        _tokens("Lead-in text", italic=False)
+        + [_quote_token("‘")]
+        + _tokens("incomplete quote with no closer", italic=False)
+        # no closing ’ — run-out to end of token stream.
+    )
+    out = extract_quoted_phrases(tokens)
+    assert out == [], f"expected no captures, got {out!r}"
+
+
+def test_extract_quoted_keeps_pronoun_I_in_phrase():
+    """Single 'I' matches the Roman-numeral regex but in a quoted run it
+    is the English pronoun and must not split the phrase.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("Yes", italic=False)
+        + [_quote_token(",")]
+        + _tokens("I am happy to accept it in that format", italic=False)
+        + [_quote_token(",")]
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert "Yes I am happy to accept it in that format" in out
 
 
 def test_extract_quoted_does_not_split_on_sentence_punctuation():

@@ -261,6 +261,13 @@ class PDFViewer(QWidget):
         self.doc = None
         self.current_page_index = 0
         self.current_zoom = 1.0
+
+        # Page-numbering view used by Go-To-Page. The controller pushes
+        # these in via set_page_numbering(...) whenever the user changes
+        # the strategy radio or the offset spin, and on PDF load. They
+        # default to the same values the model defaults to.
+        self._page_strategy = "logical"
+        self._page_offset = 0
         
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
@@ -315,6 +322,10 @@ class PDFViewer(QWidget):
 
         self.goto_edit = QLineEdit()
         self.goto_edit.setPlaceholderText("Page #")
+        self.goto_edit.setToolTip(
+            "Go to the page whose printed label matches this input "
+            "(honours the configured strategy and offset)."
+        )
         self.goto_edit.setFixedWidth(70)
         self.goto_edit.returnPressed.connect(self._on_goto_page)
 
@@ -637,19 +648,44 @@ class PDFViewer(QWidget):
             count += len(page.search_for(text))
         self.selection_count_label.setText(f"Selected text occurs {count} time{'s' if count != 1 else ''}")
 
+    def set_page_numbering(self, strategy: str, offset: int):
+        """Update the strategy/offset the goto-page resolver uses.
+
+        The controller calls this on PDF load and whenever the user
+        changes the strategy radio or offset spin in the sidebar. The
+        viewer does not otherwise re-render — these values only affect
+        how Go-To-Page interprets the user's input.
+        """
+        self._page_strategy = strategy or "logical"
+        try:
+            self._page_offset = int(offset)
+        except (TypeError, ValueError):
+            self._page_offset = 0
+
     def _on_goto_page(self):
+        from model.indexer import label_for_page, resolve_label_to_index
+
         text = self.goto_edit.text().strip()
         self.goto_edit.clear()
-        try:
-            page_num = int(text)
-            index = page_num - 1  # Convert 1-based display to 0-based index
-            if self.doc and 0 <= index < len(self.doc):
-                self.current_page_index = index
-                self.update_view()
-                self.update_controls()
-                self.page_changed.emit(self.current_page_index)
-        except ValueError:
-            pass
+        if not text or not self.doc:
+            return
+
+        labels = [
+            label_for_page(
+                self.doc.load_page(i),
+                i + 1,
+                self._page_strategy,
+                self._page_offset,
+            )
+            for i in range(len(self.doc))
+        ]
+        index = resolve_label_to_index(text, labels)
+        if index is None:
+            return
+        self.current_page_index = index
+        self.update_view()
+        self.update_controls()
+        self.page_changed.emit(self.current_page_index)
 
     # ------------------------------------------------------------------
     # PDF text search

@@ -126,13 +126,58 @@ class SettingsSidebar(QWidget):
         self.index_italic_chk.setChecked(True)
         layout.addWidget(self.index_italic_chk)
 
+        italic_len_row = QHBoxLayout()
+        italic_len_row.addSpacing(20)
+        italic_len_row.addWidget(QLabel("Max chars:"))
+        self.italic_max_chars_spin = QSpinBox()
+        self.italic_max_chars_spin.setRange(0, 10000)
+        self.italic_max_chars_spin.setValue(100)
+        self.italic_max_chars_spin.setToolTip(
+            "Drop every entry from a continuous italic run whose total "
+            "length exceeds this many characters. Set to 0 to disable."
+        )
+        italic_len_row.addWidget(self.italic_max_chars_spin)
+        italic_len_row.addStretch()
+        layout.addLayout(italic_len_row)
+
         self.bold_indexing_chk = QCheckBox("Index Bold Text")
         self.bold_indexing_chk.setChecked(False)
         layout.addWidget(self.bold_indexing_chk)
 
+        bold_len_row = QHBoxLayout()
+        bold_len_row.addSpacing(20)
+        bold_len_row.addWidget(QLabel("Max chars:"))
+        self.bold_max_chars_spin = QSpinBox()
+        self.bold_max_chars_spin.setRange(0, 10000)
+        self.bold_max_chars_spin.setValue(100)
+        self.bold_max_chars_spin.setToolTip(
+            "Drop every entry from a continuous bold run whose total "
+            "length exceeds this many characters. Set to 0 to disable."
+        )
+        bold_len_row.addWidget(self.bold_max_chars_spin)
+        bold_len_row.addStretch()
+        layout.addLayout(bold_len_row)
+
         self.index_single_quotes_chk = QCheckBox("Index Single Quotes")
         self.index_single_quotes_chk.setChecked(True)
         layout.addWidget(self.index_single_quotes_chk)
+
+        # Length cap for quoted phrases. A long ‘…’ that wraps several
+        # layout lines is usually noise — this stops blockquotes and
+        # decorative enclosures becoming index entries.
+        sq_len_row = QHBoxLayout()
+        sq_len_row.addSpacing(20)  # indent under the parent checkbox
+        sq_len_row.addWidget(QLabel("Max chars:"))
+        self.single_quote_max_chars_spin = QSpinBox()
+        self.single_quote_max_chars_spin.setRange(0, 10000)
+        self.single_quote_max_chars_spin.setValue(100)
+        self.single_quote_max_chars_spin.setToolTip(
+            "Drop quoted-phrase entries longer than this many characters. "
+            "Set to 0 to disable the cap."
+        )
+        sq_len_row.addWidget(self.single_quote_max_chars_spin)
+        sq_len_row.addStretch()
+        layout.addLayout(sq_len_row)
 
         self.surname_first_chk = QCheckBox("Surname First")
         self.surname_first_chk.setChecked(False)
@@ -145,6 +190,23 @@ class SettingsSidebar(QWidget):
         self.name_indexing_chk.toggled.connect(self.index_italic_chk.setEnabled)
         self.name_indexing_chk.toggled.connect(self.bold_indexing_chk.setEnabled)
         self.name_indexing_chk.toggled.connect(self.index_single_quotes_chk.setEnabled)
+        # Gate each max-chars spin on the master toggle plus its own style toggle.
+        def _refresh_style_caps_enabled(_=None):
+            master = self.name_indexing_chk.isChecked()
+            self.single_quote_max_chars_spin.setEnabled(
+                master and self.index_single_quotes_chk.isChecked()
+            )
+            self.italic_max_chars_spin.setEnabled(
+                master and self.index_italic_chk.isChecked()
+            )
+            self.bold_max_chars_spin.setEnabled(
+                master and self.bold_indexing_chk.isChecked()
+            )
+        self.name_indexing_chk.toggled.connect(_refresh_style_caps_enabled)
+        self.index_single_quotes_chk.toggled.connect(_refresh_style_caps_enabled)
+        self.index_italic_chk.toggled.connect(_refresh_style_caps_enabled)
+        self.bold_indexing_chk.toggled.connect(_refresh_style_caps_enabled)
+        _refresh_style_caps_enabled()
 
         layout.addSpacing(8)
         layout.addWidget(self._sep())
@@ -431,6 +493,11 @@ class SettingsSidebar(QWidget):
         self.index_italic_chk.setChecked(config.get("index_italic", True))
         self.bold_indexing_chk.setChecked(config.get("bold_indexing", False))
         self.index_single_quotes_chk.setChecked(config.get("index_single_quotes", True))
+        self.single_quote_max_chars_spin.setValue(
+            config.get("single_quote_max_chars", 100)
+        )
+        self.italic_max_chars_spin.setValue(config.get("italic_max_chars", 100))
+        self.bold_max_chars_spin.setValue(config.get("bold_max_chars", 100))
         self.surname_first_chk.setChecked(config.get("surname_first", False))
         self.separate_style_files_chk.setChecked(
             config.get("separate_style_files", True)
