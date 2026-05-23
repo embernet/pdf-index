@@ -44,6 +44,20 @@ def test_admits_all_caps_inside_capitalised_run():
     assert by_text["European NATO Summit"]["caps"] is True
 
 
+def test_excludes_pronoun_contraction_as_name_word():
+    # "I’d" is a grammatical contraction, not a proper name.
+    tokens = _tokens("Then I’d say")
+    names = extract_names_from_tokens(tokens)
+    assert not any(n == "I’d" for n, _ in names)
+
+
+def test_keeps_apostrophe_surname_name_word():
+    # Legitimate apostrophe surnames must still be indexable.
+    tokens = _tokens("Then O’Donnell arrived")
+    names = extract_names_from_tokens(tokens)
+    assert any(n == "O’Donnell" for n, _ in names)
+
+
 def test_extract_italic_phrase_lowercase():
     # Italic Latin phrase — no word capitalised.
     tokens = _tokens("in vino veritas", italic=True)
@@ -329,6 +343,28 @@ def test_extract_quoted_still_closes_on_real_closing_quote():
     assert "Title Here" in out
     # Importantly, "Other" must NOT have been absorbed into the run.
     assert not any("Other" in p for p in out)
+
+
+def test_extract_quoted_does_not_split_on_sentence_punctuation():
+    """A single quoted run containing periods/exclamation marks should
+    emit one entry, not fragmented sub-entries.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        [_quote_token("‘")]
+        + _tokens("Murray it’s over", italic=False)
+        + [_quote_token(".")]
+        + _tokens("Thank the f It’s over", italic=False)
+        + [_quote_token("!")]
+        + _tokens("But yes bloody marvellous but thank the heavens it’s over", italic=False)
+        + [_quote_token(".")]
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert out == [
+        "Murray it’s over Thank the f It’s over But yes bloody marvellous but thank the heavens it’s over"
+    ]
 
 
 def _occ(idx, label="x", flags=None):

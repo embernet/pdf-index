@@ -616,6 +616,24 @@ def extract_styled_tokens(page) -> List[StyledToken]:
 # normal word (e.g. "‘Title’ Other") is NOT swallowed.
 _CONTRACTION_SUFFIXES = frozenset({"s", "t", "m", "d", "re", "ve", "ll"})
 
+# Pronoun/modal contractions that should never become standalone index terms
+# in the name-extraction pipeline (e.g. "I’d", "We’re", "They’ll").
+#
+# This is intentionally narrow: it matches grammatical contractions with a
+# fixed suffix set and does not affect legitimate apostrophe-containing names
+# like "O’Donnell" or "D'Arcy".
+_NON_NAME_CONTRACTION_RE = re.compile(
+    r"^(i|you|we|they|he|she|it|who|what|where|when|why|how|that|there|here|let)['\u2019](d|ll|m|re|s|t|ve)$",
+    re.IGNORECASE,
+)
+
+
+def _is_non_name_contraction(word: str) -> bool:
+    """Return True for grammatical contractions that should not be indexed
+    as names (e.g. I’d, We’re, They’ll).
+    """
+    return bool(_NON_NAME_CONTRACTION_RE.match(word))
+
 
 def _merge_split_apostrophe_suffix(tokens: List["StyledToken"]) -> List["StyledToken"]:
     """Fold span-split possessive/contraction sequences back into one word.
@@ -859,6 +877,20 @@ def extract_names_from_tokens(
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
                 started_with_styled_bypass = False
+            continue
+
+        # Grammatical contractions (I’d, We’re, They’ll, ...) are never
+        # index terms in a name index, even when capitalised by sentence
+        # position. Treat them as hard n-gram breaks.
+        if _is_non_name_contraction(word):
+            if current_ngram:
+                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                    names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
+                current_ngram = []
+                current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
+                current_ngram_italic = None
+                started_with_styled_bypass = False
+            after_sentence_end = False
             continue
 
         # Title prefixes: skip the word but keep building the n-gram
@@ -1157,10 +1189,15 @@ def extract_quoted_phrases(tokens: List[StyledToken]) -> List[str]:
 
     Within a quoted run, the same filters as the italic/bold passes apply:
     structural-word, footnote-ref, roman-numeral, and number-like tokens
-    flush the run; commas/parentheses stay inside; terminal punctuation
-    (.?!;:) flushes; title prefixes (Dr, Mr, ...) are skipped without
-    breaking. Tokens on a fully all-caps line are skipped — a heading
-    rendered with quoted text is unusual but possible.
+    flush the run; punctuation is ignored but does NOT split the run;
+    title prefixes (Dr, Mr, ...) are skipped without breaking. Tokens on
+    a fully all-caps line are skipped — a heading rendered with quoted
+    text is unusual but possible.
+
+    Important precedence: the enclosing single quotes define one literal
+    phrase span. Internal sentence punctuation must not create partial
+    sub-entries (for example splitting a quoted sentence into several
+    smaller phrases).
 
     A single-token run that is just a stop word is dropped on flush.
     """
@@ -1204,8 +1241,6 @@ def extract_quoted_phrases(tokens: List[StyledToken]) -> List[str]:
             continue
 
         if _is_punctuation(word):
-            if any(ch in TERMINAL_PUNCT_CHARS for ch in word):
-                flush()
             continue
 
         # The quoted-title rule captures literal proper names — Chetham's
@@ -1357,6 +1392,8 @@ def filter_names(names: List[str]) -> List[str]:
         if len(name) <= 1:
             continue
         if name.isdigit():
+            continue
+        if " " not in name and _is_non_name_contraction(name):
             continue
         filtered.append(name)
     return filtered
