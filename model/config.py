@@ -12,7 +12,7 @@ class ConfigManager:
         "fit_page": True,
         "name_indexing": True,
         "index_capitalised": True,
-        "bold_indexing": False,
+        "bold_indexing": True,
         "index_single_quotes": True,
         "index_from_offset": True,
         "surname_first": False,
