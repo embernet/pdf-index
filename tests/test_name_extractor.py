@@ -378,6 +378,51 @@ def test_possessive_preserved_when_phrase_continues():
     assert "Adam Gorb Ballade" not in names
 
 
+def test_extract_names_admits_sentence_initial_multi_word():
+    """A capitalised n-gram that starts at the very beginning of a
+    sentence should be captured in discovery mode IF it's multi-word.
+    Without this, place names like 'Long Milgate' that only ever appear
+    at sentence-start would never enter the vocabulary."""
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("Long", "Milgate", "is", "a", "street", ".")
+    ]
+    names = [n for n, _ in extract_names_from_tokens(tokens, discovery_mode=True)]
+    assert "Long Milgate" in names
+
+
+def test_extract_names_filters_sentence_initial_single_word():
+    """A single sentence-initial capitalised word that doesn't grow
+    into a multi-word n-gram is still dropped — we don't want random
+    sentence starters in the vocabulary."""
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("Long", "delays", "occurred", ".")
+    ]
+    names = [n for n, _ in extract_names_from_tokens(tokens, discovery_mode=True)]
+    assert "Long" not in names
+
+
+def test_extract_names_sentence_initial_stopword_still_filtered():
+    """Sentence-initial stopwords like 'Therefore' / 'However' are
+    caught by the stopword filter (never start an n-gram) regardless
+    of the relaxed sentence-initial discovery rule."""
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("Therefore", "John", "Smith", "left", ".")
+    ]
+    stopwords = {"therefore", "however"}
+    names = [n for n, _ in extract_names_from_tokens(
+        tokens, discovery_mode=True, stopwords=stopwords)]
+    # "Therefore" doesn't seed an n-gram. "John Smith" still captured.
+    assert "Therefore John Smith" not in names
+    assert "Therefore John" not in names
+    assert "John Smith" in names
+
+
 def test_match_greedy_consumes_tokens_no_substring_duplicate():
     """When 'Long Milgate' (the longest known n-gram) matches at position
     i, the matcher must advance past the consumed tokens so bare

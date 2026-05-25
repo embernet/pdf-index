@@ -778,7 +778,7 @@ def extract_names_from_tokens(
     # single italic publication name like "Piano" at the start of a
     # sentence would seed the vocabulary and pull in every plain
     # "Piano" elsewhere in the document.
-    started_with_styled_bypass = False
+    started_with_tentative_bypass = False
 
     for token in tokens:
         word = token.text.strip()
@@ -791,23 +791,23 @@ def extract_names_from_tokens(
         # kept so that names in footnotes are indexed correctly.
         if token.is_superscript and _is_footnote_ref(word):
             if current_ngram:
-                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                if not (len(current_ngram) == 1 and started_with_tentative_bypass):
                     names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
-                started_with_styled_bypass = False
+                started_with_tentative_bypass = False
             continue
 
         # Punctuation handling
         if _is_punctuation(word):
             if current_ngram:
-                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                if not (len(current_ngram) == 1 and started_with_tentative_bypass):
                     names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
-                started_with_styled_bypass = False
+                started_with_tentative_bypass = False
             if word in SENTENCE_END_CHARS:
                 after_sentence_end = True
             continue
@@ -848,12 +848,12 @@ def extract_names_from_tokens(
         # Filter: structural words (Chapter, Section, ...) — unconditional
         if word_lower in STRUCTURAL_WORDS:
             if current_ngram:
-                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                if not (len(current_ngram) == 1 and started_with_tentative_bypass):
                     names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
-                started_with_styled_bypass = False
+                started_with_tentative_bypass = False
             after_sentence_end = False
             continue
 
@@ -863,12 +863,12 @@ def extract_names_from_tokens(
         # not real sentence content.
         if _is_roman_numeral(word):
             if current_ngram:
-                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                if not (len(current_ngram) == 1 and started_with_tentative_bypass):
                     names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
-                started_with_styled_bypass = False
+                started_with_tentative_bypass = False
             continue
 
         # Filter: number-like tokens.
@@ -878,12 +878,12 @@ def extract_names_from_tokens(
         # Clearing the flag here would make "Once" look mid-sentence.
         if _is_number_like(word):
             if current_ngram:
-                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                if not (len(current_ngram) == 1 and started_with_tentative_bypass):
                     names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
-                started_with_styled_bypass = False
+                started_with_tentative_bypass = False
             continue
 
         # Grammatical contractions (I’d, We’re, They’ll, ...) are never
@@ -891,12 +891,12 @@ def extract_names_from_tokens(
         # position. Treat them as hard n-gram breaks.
         if _is_non_name_contraction(word):
             if current_ngram:
-                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                if not (len(current_ngram) == 1 and started_with_tentative_bypass):
                     names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
-                started_with_styled_bypass = False
+                started_with_tentative_bypass = False
             after_sentence_end = False
             continue
 
@@ -921,19 +921,19 @@ def extract_names_from_tokens(
                 after_sentence_end = False
                 continue
             if current_ngram:
-                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                if not (len(current_ngram) == 1 and started_with_tentative_bypass):
                     names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
-                started_with_styled_bypass = False
+                started_with_tentative_bypass = False
             after_sentence_end = False
             continue
 
         # Determine if this is a "name word"
         is_name_word = False
 
-        admitted_via_styled_bypass = False
+        admitted_via_tentative_bypass = False
         if word[0].isupper():
             # Sentence-initial capitalisation check
             if after_sentence_end:
@@ -942,19 +942,19 @@ def extract_names_from_tokens(
                     # but if this is the first word of a new n-gram we
                     # mark the n-gram so a single-word bypass admission
                     # gets dropped at flush time.
-                    admitted_via_styled_bypass = True
+                    admitted_via_tentative_bypass = True
                 elif discovery_mode or word_lower in SENTENCE_START_IGNORE:
-                    # In discovery mode skip ALL sentence-initial caps;
-                    # otherwise only skip common starters.
-                    after_sentence_end = False
-                    if current_ngram:
-                        if not (len(current_ngram) == 1 and started_with_styled_bypass):
-                            names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
-                        current_ngram = []
-                        current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
-                        current_ngram_italic = None
-                        started_with_styled_bypass = False
-                    continue
+                    # Sentence-initial cap in discovery mode (or a known
+                    # ambiguous sentence-starter). Admit the word but
+                    # mark the n-gram as tentative — at flush time, a
+                    # single-word n-gram with this flag is dropped.
+                    # Multi-word n-grams survive, which catches place
+                    # names like "Long Milgate" or "New York" that only
+                    # ever appear at the start of a sentence.
+                    # Stopwords like "Therefore" / "However" are still
+                    # filtered: they fail the separate stopword check
+                    # at the n-gram-start point below.
+                    admitted_via_tentative_bypass = True
             is_name_word = True
 
         # Note: bold/italic ONLY helps capitalised words bypass the sentence-
@@ -973,12 +973,12 @@ def extract_names_from_tokens(
         # block below.
         if token.from_all_caps_line:
             if current_ngram:
-                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                if not (len(current_ngram) == 1 and started_with_tentative_bypass):
                     names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
-                started_with_styled_bypass = False
+                started_with_tentative_bypass = False
             continue
 
         if is_name_word:
@@ -988,15 +988,15 @@ def extract_names_from_tokens(
             # Style break: flush the n-gram when italic status changes mid-sequence
             # (e.g. "Adam Gorb's" in plain text followed by italic "Absinthe").
             if current_ngram and token.is_italic != current_ngram_italic:
-                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                if not (len(current_ngram) == 1 and started_with_tentative_bypass):
                     names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
-                started_with_styled_bypass = False
+                started_with_tentative_bypass = False
             if not current_ngram:
                 current_ngram_italic = token.is_italic
-                started_with_styled_bypass = admitted_via_styled_bypass
+                started_with_tentative_bypass = admitted_via_tentative_bypass
             current_ngram.append(word)
             if token.is_italic:
                 current_flags["italic"] = True
@@ -1007,16 +1007,16 @@ def extract_names_from_tokens(
         else:
             # Lowercase non-styled, non-connector word: breaks n-gram
             if current_ngram:
-                if not (len(current_ngram) == 1 and started_with_styled_bypass):
+                if not (len(current_ngram) == 1 and started_with_tentative_bypass):
                     names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
                 current_ngram = []
                 current_flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 current_ngram_italic = None
-                started_with_styled_bypass = False
+                started_with_tentative_bypass = False
 
     # Flush any remaining n-gram
     if current_ngram:
-        if not (len(current_ngram) == 1 and started_with_styled_bypass):
+        if not (len(current_ngram) == 1 and started_with_tentative_bypass):
             names.append((_join_ngram_strip_terminal_possessive(current_ngram), dict(current_flags)))
 
     return names
