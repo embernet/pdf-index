@@ -324,7 +324,18 @@ _JS = r"""
       }
       const target = document.getElementById('term-' + key);
       if (target) {
-        target.scrollIntoView({ behavior: 'auto', block: 'center' });
+        // Direct scrollTop assignment — never animates regardless of
+        // browser or OS smooth-scrolling preferences. scrollIntoView
+        // with behavior: 'auto'/'instant' is still animated on
+        // macOS Safari/Chrome when system smooth-scrolling is on.
+        const container = document.getElementById('entries');
+        const containerRect = container.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const offsetWithinContainer =
+          (targetRect.top - containerRect.top) + container.scrollTop;
+        container.scrollTop = offsetWithinContainer
+          - (container.clientHeight / 2)
+          + (target.offsetHeight / 2);
         target.classList.remove('pulse');
         void target.offsetWidth;
         target.classList.add('pulse');
