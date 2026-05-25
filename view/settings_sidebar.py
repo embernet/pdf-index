@@ -223,6 +223,16 @@ class SettingsSidebar(QWidget):
         self.separate_style_files_chk.setChecked(True)
         layout.addWidget(self.separate_style_files_chk)
 
+        self.generate_web_bundle_chk = QCheckBox("Generate web view")
+        self.generate_web_bundle_chk.setToolTip(
+            "Write a self-contained HTML+images bundle to <project>/web/ "
+            "alongside the index files. Useful for sharing a browsable "
+            "PDF + index with someone who doesn't have this app. "
+            "Slow for large PDFs and uses noticeable disk space."
+        )
+        self.generate_web_bundle_chk.setChecked(False)
+        layout.addWidget(self.generate_web_bundle_chk)
+
         layout.addSpacing(8)
         layout.addWidget(self._sep())
         layout.addSpacing(4)
