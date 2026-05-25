@@ -110,6 +110,42 @@ Index files are automatically saved in the project folder when generated.
 - **Filter bar** — type to filter the displayed index entries; shows a filtered/total count.
 - **Style selector** — `Aggregate | Italic | Bold | Caps | Single Quotes | Other` radio bar above the index output (visible when *Separate index files by style* is on). Filters the displayed entries to those that have at least one occurrence in the selected style; page numbers within the filtered entries also restrict to that style.
 
+### Web View (optional)
+
+When **Generate web view** is enabled in the Settings sidebar, Create Index
+also writes a self-contained browser-friendly bundle to
+`<project>/web/`:
+
+```
+web/
+  index.html        # the whole index in one HTML page
+  images/           # one PNG per PDF page
+```
+
+Open `web/index.html` in any browser to browse the PDF page by page
+with the index in a sidebar. Click a highlighted term in a page to
+scroll the sidebar to that term's entry; click a page number in the
+sidebar to jump to that page.
+
+Controls in the top toolbar:
+
+- **Pages / Scroll** — fit one page at a time, or continuous scrolling.
+- **Sidebar** — show or hide the index sidebar (also `i`).
+- **Highlights** — show or hide the indexed-term overlays (also `h`).
+- **« First / ‹ Prev / Next › / Last »** — page-by-page navigation
+  (also `Home`, `End`, `←`, `→`, `PageUp`, `PageDown`).
+- **Page input** — type the printed page label (`iv`, `12`) and press
+  Enter to jump.
+- **Play / Pause** — auto-advance one page every N seconds (default 5).
+
+The option is **off by default** because rendering page images takes
+time and disk space, especially for long books. Re-running Create
+Index reuses the existing page images when the PDF hasn't changed.
+
+The bundle is intended to be zipped (the `web/` folder is one
+self-contained artifact) and sent to someone who doesn't have the
+desktop app — they can browse and audit the index in any browser.
+
 ---
 
 ## Reports
