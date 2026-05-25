@@ -196,3 +196,147 @@ def render_page_image(pdf_path: str, page_index: int, out_path: str, zoom: float
         pix.save(out_path)
     finally:
         doc.close()
+
+
+# ---------------------------------------------------------------------------
+# Cache sidecar
+# ---------------------------------------------------------------------------
+
+def _read_cache(out_dir: str) -> dict:
+    import json
+    import os
+    path = os.path.join(out_dir, ".cache.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _write_cache(out_dir: str, pdf_mtime: float, page_count: int):
+    import json
+    import os
+    path = os.path.join(out_dir, ".cache.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"pdf_mtime": pdf_mtime, "page_count": page_count}, f)
+
+
+def _cache_matches(cache: dict, pdf_mtime: float, page_count: int) -> bool:
+    return (
+        cache.get("pdf_mtime") == pdf_mtime
+        and cache.get("page_count") == page_count
+    )
+
+
+# ---------------------------------------------------------------------------
+# Orchestration
+# ---------------------------------------------------------------------------
+
+def generate_bundle_sync(
+    pdf_path: str,
+    raw_results: dict,
+    out_dir: str,
+    *,
+    strategy: str,
+    offset: int,
+    index_front_matter: bool,
+    capitalize_keys: bool,
+    zoom: float = 1.5,
+    progress_callback=None,
+) -> None:
+    """Synchronously generate the web bundle. Used by tests and by the
+    QThread wrapper. progress_callback receives an int 0..100.
+    """
+    import os
+
+    os.makedirs(out_dir, exist_ok=True)
+    images_dir = os.path.join(out_dir, "images")
+    os.makedirs(images_dir, exist_ok=True)
+
+    if progress_callback:
+        progress_callback(2)
+
+    page_labels, page_dims, page_highlights = collect_page_data(
+        pdf_path, raw_results,
+        strategy=strategy, offset=offset,
+        index_front_matter=index_front_matter,
+    )
+    page_count = len(page_labels)
+    if progress_callback:
+        progress_callback(10)
+
+    pdf_mtime = os.path.getmtime(pdf_path)
+    cache = _read_cache(out_dir)
+    render_images = not _cache_matches(cache, pdf_mtime, page_count)
+
+    if render_images:
+        for i in range(page_count):
+            out_path = os.path.join(images_dir, f"page-{i+1:04d}.png")
+            try:
+                render_page_image(pdf_path, i, out_path, zoom=zoom)
+            except Exception:
+                continue
+            if progress_callback:
+                progress_callback(10 + int((i + 1) / page_count * 80))
+        _write_cache(out_dir, pdf_mtime, page_count)
+    else:
+        if progress_callback:
+            progress_callback(90)
+
+    pdf_name = os.path.basename(pdf_path)
+    payload = build_payload_from_inputs(
+        pdf_name=pdf_name,
+        raw_results=raw_results,
+        page_labels=page_labels,
+        page_dims=page_dims,
+        page_highlights=page_highlights,
+        capitalize_keys=capitalize_keys,
+    )
+
+    from model.web_template import render_html
+    html_str = render_html(payload)
+    with open(os.path.join(out_dir, "index.html"), "w", encoding="utf-8") as f:
+        f.write(html_str)
+
+    if progress_callback:
+        progress_callback(100)
+
+
+# ---------------------------------------------------------------------------
+# QThread wrapper
+# ---------------------------------------------------------------------------
+
+try:
+    from PyQt6.QtCore import QThread, pyqtSignal
+
+    class WebBundleThread(QThread):
+        progress_updated = pyqtSignal(int)
+        finished_ok = pyqtSignal(str)         # out_dir
+        error_occurred = pyqtSignal(str)
+
+        def __init__(self, pdf_path, raw_results, out_dir, *,
+                     strategy, offset, index_front_matter, capitalize_keys):
+            super().__init__()
+            self._args = dict(
+                pdf_path=pdf_path,
+                raw_results=raw_results,
+                out_dir=out_dir,
+                strategy=strategy,
+                offset=offset,
+                index_front_matter=index_front_matter,
+                capitalize_keys=capitalize_keys,
+            )
+
+        def run(self):
+            try:
+                generate_bundle_sync(
+                    progress_callback=self.progress_updated.emit,
+                    **self._args,
+                )
+                self.finished_ok.emit(self._args["out_dir"])
+            except Exception as e:
+                self.error_occurred.emit(str(e))
+except ImportError:
+    WebBundleThread = None  # type: ignore[assignment]
