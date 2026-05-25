@@ -21,6 +21,7 @@ class ConfigManager:
         "surname_first": False,
         "index_italic": True,
         "separate_style_files": True,
+        "generate_web_bundle": False,
         "index_front_matter_roman": True,
         "style_view": "aggregate",
         "llm_enrichment_enabled": False,
