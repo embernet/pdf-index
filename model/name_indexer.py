@@ -1447,15 +1447,17 @@ def find_known_names_in_tokens(
     found: List[Tuple[str, dict]] = []
     n_tokens = len(word_tokens)
 
-    for i in range(n_tokens):
-        if word_tokens[i] is None:
-            continue
-        # Only consider positions where the first word is capitalised;
-        # this prevents matching purely lowercase text like "around the
-        # world" when only "Around The World" is in the vocabulary.
-        if not word_tokens[i][0].isupper():
+    # Walk tokens with manual advance so a matched n-gram consumes its
+    # own tokens — otherwise matching "Long Milgate" at position i would
+    # also re-match bare "Milgate" at position i+1 and the index gets
+    # spurious sub-form entries for every recognised compound.
+    i = 0
+    while i < n_tokens:
+        if word_tokens[i] is None or not word_tokens[i][0].isupper():
+            i += 1
             continue
         # Try n-grams from longest to shortest for greedy matching
+        matched_length = 0
         for length in range(min(max_ngram_len, n_tokens - i), 0, -1):
             # Check no sentinel in span — skip this length but keep
             # trying shorter ones (a shorter span may not cross the
@@ -1477,7 +1479,11 @@ def find_known_names_in_tokens(
                     if fj["caps"]:
                         flags["caps"] = True
                 found.append((canon, flags))
+                matched_length = length
                 break  # greedy: take longest match starting at i
+        # Advance past the matched span so sub-forms aren't re-recorded.
+        # If nothing matched, advance by 1.
+        i += matched_length if matched_length > 0 else 1
 
     return found
 

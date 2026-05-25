@@ -378,6 +378,43 @@ def test_possessive_preserved_when_phrase_continues():
     assert "Adam Gorb Ballade" not in names
 
 
+def test_match_greedy_consumes_tokens_no_substring_duplicate():
+    """When 'Long Milgate' (the longest known n-gram) matches at position
+    i, the matcher must advance past the consumed tokens so bare
+    'Milgate' is NOT also recorded at position i+1. Otherwise every
+    'Long Milgate' produces a duplicate 'Milgate' entry that's just
+    noise."""
+    from model.name_indexer import find_known_names_in_tokens
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("He", "lived", "on", "Long", "Milgate", ".")
+    ]
+    vocab = {"Long Milgate", "Milgate"}
+    vocab_lower = {n.lower(): n for n in vocab}
+    found = [n for n, _ in find_known_names_in_tokens(tokens, vocab, vocab_lower, 3)]
+    assert found == ["Long Milgate"]
+
+
+def test_match_greedy_still_finds_standalone_after_compound():
+    """If 'Long Milgate' matches and then a later standalone 'Milgate'
+    appears, the standalone IS recorded — skip-ahead only consumes the
+    actual matched tokens, not the whole rest of the page."""
+    from model.name_indexer import find_known_names_in_tokens
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("Visit", "Long", "Milgate", ",", "or", "stay", "in", "Milgate", ".")
+    ]
+    vocab = {"Long Milgate", "Milgate"}
+    vocab_lower = {n.lower(): n for n in vocab}
+    found = [n for n, _ in find_known_names_in_tokens(tokens, vocab, vocab_lower, 3)]
+    assert "Long Milgate" in found
+    assert "Milgate" in found
+    # Only ONE Milgate (the standalone), not two
+    assert found.count("Milgate") == 1
+
+
 def test_match_finds_internal_possessive_title():
     """find_known_names_in_tokens must be able to locate a vocab entry
     that contains a mid-phrase possessive."""
