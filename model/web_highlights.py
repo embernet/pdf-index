@@ -29,18 +29,30 @@ def _normalise_word(word: str) -> str:
 # so genuine all-digit tokens ("1980", "12") and intentionally-digit-
 # suffixed terms ("USB2") aren't corrupted.
 _FOOTNOTE_TRAILING_CHARS = "0123456789*†‡§"
+# Combined trailing-noise set: footnote markers + standard punctuation.
+# Used by _normalise_pdf_word so that "Salzburg,7" (comma followed by
+# footnote digit, both glued to the word) reduces to "Salzburg" — the
+# bidirectional _normalise_word strip leaves the comma internal because
+# of the trailing 7, so a single combined rstrip after the initial
+# normalisation is needed.
+_PDF_TRAILING_NOISE = _FOOTNOTE_TRAILING_CHARS + _STRIP_CHARS
 
 
 def _normalise_pdf_word(word: str) -> str:
     """PDF-side normalisation: same as _normalise_word plus a trailing
-    footnote-marker strip. Used only when the target word is *not*
-    itself ending in a footnote-marker char — `_words_equal` checks
-    direct equality first, so terms like "USB2" still match themselves.
+    strip of footnote markers and standard punctuation. Used only when
+    the target word is *not* itself ending in such a char — _words_equal
+    checks direct equality first, so terms like "USB2" still match
+    themselves.
     """
     stripped = _normalise_word(word)
     if not stripped or not stripped[0].isalpha():
         return stripped
-    trimmed = stripped.rstrip(_FOOTNOTE_TRAILING_CHARS)
+    trimmed = stripped.rstrip(_PDF_TRAILING_NOISE)
+    # Re-check possessive in case the trimming exposed one
+    # (e.g. "Pemberton's,7" -> "Pemberton's" after rstrip — strip 's now).
+    if trimmed.endswith("'s") or trimmed.endswith("’s"):
+        trimmed = trimmed[:-2]
     return trimmed or stripped
 
 

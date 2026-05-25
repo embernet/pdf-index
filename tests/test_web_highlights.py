@@ -82,6 +82,19 @@ def test_match_preserves_trailing_digit_when_target_also_has_it():
     assert match_term_at(words, 0, ["USB2"]) == [0]
 
 
+def test_match_comma_then_footnote_digit():
+    # PDF: "Salzburg,7" — comma followed by footnote number, both glued
+    # onto Salzburg as one token. The bare "Salzburg" must still match.
+    words = [_word("Salzburg,7")]
+    assert match_term_at(words, 0, ["Salzburg"]) == [0]
+
+
+def test_match_multiple_punctuation_then_footnote():
+    # "Salzburg);*" — closing paren, semicolon, and asterisk-footnote.
+    words = [_word("Salzburg);*")]
+    assert match_term_at(words, 0, ["Salzburg"]) == [0]
+
+
 def test_case_aware_uppercase_target_blocks_lowercase_pdf():
     words = [_word("manchester")]
     assert match_term_at(words, 0, ["Manchester"]) is None
