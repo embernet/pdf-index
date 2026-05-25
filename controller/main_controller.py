@@ -23,6 +23,7 @@ class MainController:
         self.tag_cloud_thread = None
         self.index_cloud_thread = None
         self.not_in_index_cloud_thread = None
+        self._web_bundle_thread = None
         self._cached_wordcloud = None  # Cached WordCloud for fast recolor
         self._name_type_overrides: dict = {}  # {natural_name: "person"|"place_thing"}
 
@@ -82,6 +83,9 @@ class MainController:
         )
         self.view.settings_sidebar.separate_style_files_chk.toggled.connect(
             lambda: self.update_output_display()
+        )
+        self.view.settings_sidebar.generate_web_bundle_chk.toggled.connect(
+            lambda: self.save_current_config()
         )
         self.view.settings_sidebar.index_capitalised_chk.toggled.connect(lambda: self.save_current_config())
         self.view.settings_sidebar.index_front_matter_chk.toggled.connect(lambda: self.save_current_config())
@@ -321,6 +325,7 @@ class MainController:
             "italic_max_chars": sidebar.italic_max_chars_spin.value(),
             "bold_max_chars": sidebar.bold_max_chars_spin.value(),
             "separate_style_files": sidebar.separate_style_files_chk.isChecked(),
+            "generate_web_bundle": sidebar.generate_web_bundle_chk.isChecked(),
             "index_front_matter_roman": sidebar.index_front_matter_chk.isChecked(),
             "style_view": ctrl.get_style_view(),
             "llm_enrichment_enabled": sidebar.llm_enrichment_chk.isChecked(),
@@ -935,6 +940,55 @@ class MainController:
                             os.remove(stale)
                         except OSError:
                             pass
+
+        # Optional web bundle export. Off by default; controlled by the
+        # 'Generate web view' checkbox in the settings sidebar.
+        if (
+            self.view.settings_sidebar.generate_web_bundle_chk.isChecked()
+            and self.last_raw_results is not None
+            and self.current_pdf_path
+        ):
+            self._launch_web_bundle()
+
+    def _launch_web_bundle(self):
+        from model.web_bundle import WebBundleThread
+
+        if WebBundleThread is None:
+            return
+
+        out_dir = os.path.join(self.project_path, "web")
+        sidebar = self.view.settings_sidebar
+        strategy = "logical" if sidebar.radio_logical.isChecked() else "physical"
+        offset = sidebar.offset_spin.value()
+        index_front_matter = sidebar.index_front_matter_chk.isChecked()
+        capitalize = sidebar.capitalize_chk.isChecked()
+
+        prev = getattr(self, "_web_bundle_thread", None)
+        if prev is not None and prev.isRunning():
+            prev.wait(50)
+
+        thread = WebBundleThread(
+            pdf_path=self.current_pdf_path,
+            raw_results=self.last_raw_results,
+            out_dir=out_dir,
+            strategy=strategy,
+            offset=offset,
+            index_front_matter=index_front_matter,
+            capitalize_keys=capitalize,
+        )
+        thread.progress_updated.connect(self.view.progress_bar.setValue)
+        thread.finished_ok.connect(self._on_web_bundle_finished)
+        thread.error_occurred.connect(self._on_web_bundle_error)
+        self._web_bundle_thread = thread
+        self.view.progress_bar.setVisible(True)
+        thread.start()
+
+    def _on_web_bundle_finished(self, out_dir):
+        self.view.progress_bar.setVisible(False)
+
+    def _on_web_bundle_error(self, message):
+        self.view.progress_bar.setVisible(False)
+        print(f"Web bundle generation failed: {message}")
 
     def _write_format_files(self, path_base, formatted_results):
         md = self.generate_markdown(formatted_results)

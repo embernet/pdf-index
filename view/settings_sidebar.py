@@ -512,6 +512,9 @@ class SettingsSidebar(QWidget):
         self.separate_style_files_chk.setChecked(
             config.get("separate_style_files", True)
         )
+        self.generate_web_bundle_chk.setChecked(
+            config.get("generate_web_bundle", False)
+        )
         self.llm_enrichment_chk.setChecked(config.get("llm_enrichment_enabled", False))
         self.llm_host_edit.setText(config.get("llm_host", "http://localhost:11434"))
         self.llm_model_edit.setText(config.get("llm_model", "qwen2.5:7b"))
