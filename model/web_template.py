@@ -324,7 +324,7 @@ _JS = r"""
       }
       const target = document.getElementById('term-' + key);
       if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.scrollIntoView({ behavior: 'auto', block: 'center' });
         target.classList.remove('pulse');
         void target.offsetWidth;
         target.classList.add('pulse');
