@@ -49,6 +49,39 @@ def test_match_strips_curly_quotes():
     assert match_term_at(words, 0, ["A", "New", "Method"]) == [0, 1, 2]
 
 
+def test_match_strips_trailing_footnote_digit():
+    # PDF: "Gift7" where 7 is a footnote marker glued to "Gift".
+    # Target: just "Gift" should still match.
+    words = [_word("Gift7")]
+    assert match_term_at(words, 0, ["Gift"]) == [0]
+
+
+def test_match_multiword_with_trailing_footnote_on_last_word():
+    # The reported bug: "Alicia's Gift" followed by footnote 7 →
+    # PDF tokens "Alicia's", "Gift7". Full phrase must still match.
+    words = [_word("Alicia's"), _word("Gift7", x=10)]
+    assert match_term_at(words, 0, ["Alicia's", "Gift"]) == [0, 1]
+
+
+def test_match_strips_trailing_asterisk_footnote():
+    # Some PDFs use asterisk-style footnote markers.
+    words = [_word("Gift*")]
+    assert match_term_at(words, 0, ["Gift"]) == [0]
+
+
+def test_match_preserves_digit_only_token():
+    # "1980" must still match itself — don't strip when the word is
+    # all digits (would lose the content).
+    words = [_word("1980")]
+    assert match_term_at(words, 0, ["1980"]) == [0]
+
+
+def test_match_preserves_trailing_digit_when_target_also_has_it():
+    # "USB2" target against "USB2" PDF word must match directly.
+    words = [_word("USB2")]
+    assert match_term_at(words, 0, ["USB2"]) == [0]
+
+
 def test_case_aware_uppercase_target_blocks_lowercase_pdf():
     words = [_word("manchester")]
     assert match_term_at(words, 0, ["Manchester"]) is None

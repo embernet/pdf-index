@@ -23,6 +23,27 @@ def _normalise_word(word: str) -> str:
     return stripped
 
 
+# Characters PyMuPDF can glue onto the end of a PDF word as a footnote
+# marker — digits and the most common footnote symbols. Stripped only
+# from the PDF side and only when the result remains a letter-led word,
+# so genuine all-digit tokens ("1980", "12") and intentionally-digit-
+# suffixed terms ("USB2") aren't corrupted.
+_FOOTNOTE_TRAILING_CHARS = "0123456789*†‡§"
+
+
+def _normalise_pdf_word(word: str) -> str:
+    """PDF-side normalisation: same as _normalise_word plus a trailing
+    footnote-marker strip. Used only when the target word is *not*
+    itself ending in a footnote-marker char — `_words_equal` checks
+    direct equality first, so terms like "USB2" still match themselves.
+    """
+    stripped = _normalise_word(word)
+    if not stripped or not stripped[0].isalpha():
+        return stripped
+    trimmed = stripped.rstrip(_FOOTNOTE_TRAILING_CHARS)
+    return trimmed or stripped
+
+
 def _words_equal(pdf_word: str, target_word: str) -> bool:
     """Case-aware word equality: an uppercase target requires an
     uppercase PDF word; otherwise compare case-insensitively.
@@ -71,6 +92,16 @@ def match_term_at(words, start_idx: int, target_words: list[str]):
             pdf_pos += 1
             continue
 
+        # Trailing-footnote fallback: PDFs glue footnote markers (digits,
+        # *, daggers, section signs) onto the adjacent word. Try matching
+        # the PDF word with those stripped from the right.
+        word_footnote_stripped = _normalise_pdf_word(word_text)
+        if (word_footnote_stripped != word_stripped
+                and _words_equal(word_footnote_stripped, target_stripped)):
+            matched.append(pdf_pos)
+            pdf_pos += 1
+            continue
+
         # Hyphenation join: '<prev>-' + '<next>' where next starts lowercase.
         if (pdf_pos + 1 < len(words)
                 and word_text.endswith("-")
@@ -82,6 +113,13 @@ def match_term_at(words, start_idx: int, target_words: list[str]):
             )
             joined_stripped = _normalise_word(joined)
             if _words_equal(joined_stripped, target_stripped):
+                matched.append(pdf_pos)
+                matched.append(pdf_pos + 1)
+                pdf_pos += 2
+                continue
+            joined_footnote_stripped = _normalise_pdf_word(joined)
+            if (joined_footnote_stripped != joined_stripped
+                    and _words_equal(joined_footnote_stripped, target_stripped)):
                 matched.append(pdf_pos)
                 matched.append(pdf_pos + 1)
                 pdf_pos += 2
