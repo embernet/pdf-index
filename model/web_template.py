@@ -75,6 +75,7 @@ body {
   padding: 12px;
   overflow-y: auto;
   height: calc(100vh - var(--toolbar-h));
+  scroll-behavior: auto;
 }
 body.mode-page #document {
   scroll-snap-type: y mandatory;
@@ -165,6 +166,7 @@ body.sidebar-hidden #sidebar { display: none; }
   flex: 1;
   overflow-y: auto;
   padding: 8px 12px;
+  scroll-behavior: auto;
 }
 .entry {
   padding: 4px 6px;
@@ -324,18 +326,20 @@ _JS = r"""
       }
       const target = document.getElementById('term-' + key);
       if (target) {
-        // Direct scrollTop assignment — never animates regardless of
-        // browser or OS smooth-scrolling preferences. scrollIntoView
-        // with behavior: 'auto'/'instant' is still animated on
-        // macOS Safari/Chrome when system smooth-scrolling is on.
+        // Anchor-style jump: force scroll-behavior: auto inline
+        // (overrides any CSS rule, browser/OS smooth-scrolling
+        // preference, or extension that would otherwise animate),
+        // jump scrollTop directly, then restore the prior value.
         const container = document.getElementById('entries');
+        const prevBehavior = container.style.scrollBehavior;
+        container.style.scrollBehavior = 'auto';
         const containerRect = container.getBoundingClientRect();
         const targetRect = target.getBoundingClientRect();
-        const offsetWithinContainer =
-          (targetRect.top - containerRect.top) + container.scrollTop;
-        container.scrollTop = offsetWithinContainer
-          - (container.clientHeight / 2)
-          + (target.offsetHeight / 2);
+        // Position the entry at the top of the visible entries area,
+        // with a small 8px margin so it's not flush against the edge.
+        container.scrollTop +=
+          (targetRect.top - containerRect.top) - 8;
+        container.style.scrollBehavior = prevBehavior;
         target.classList.remove('pulse');
         void target.offsetWidth;
         target.classList.add('pulse');
