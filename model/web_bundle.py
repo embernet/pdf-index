@@ -111,3 +111,88 @@ def build_payload_from_inputs(
         "buckets": build_buckets(raw_results, capitalize_keys),
         "highlights": {str(k): v for k, v in page_highlights.items()},
     }
+
+
+# ---------------------------------------------------------------------------
+# PyMuPDF integration
+# ---------------------------------------------------------------------------
+
+def collect_page_data(
+    pdf_path: str,
+    raw_results: dict,
+    strategy: str,
+    offset: int,
+    index_front_matter: bool,
+):
+    """Walk the PDF once and return (page_labels, page_dims, page_highlights).
+
+    page_highlights is a dict ``{physical_page_index: [{term_key, rect_pct}, ...]}``
+    keyed by integer indices. The orchestrator converts keys to strings
+    when writing JSON.
+    """
+    import fitz
+    from model.indexer import label_for_page
+    from model.web_highlights import rects_for_term
+
+    doc = fitz.open(pdf_path)
+    page_count = len(doc)
+
+    front_matter_idx = (
+        set(range(0, offset))
+        if (index_front_matter and offset > 0) else set()
+    )
+
+    terms_by_page = {}
+    for term, occurrences in raw_results.items():
+        for occ in occurrences:
+            phys = occ[0]
+            terms_by_page.setdefault(phys, []).append(term)
+
+    page_labels = []
+    page_dims = []
+    page_highlights = {}
+
+    for i in range(page_count):
+        page = doc.load_page(i)
+        label = label_for_page(
+            page, i + 1, strategy,
+            offset=offset, force_roman=(i in front_matter_idx),
+        )
+        page_labels.append(label)
+
+        rect = page.rect
+        page_w = float(rect.width)
+        page_h = float(rect.height)
+        page_dims.append((page_w, page_h))
+
+        terms_on_page = terms_by_page.get(i, [])
+        if not terms_on_page:
+            continue
+
+        words = page.get_text("words")
+        page_hls = []
+        for term in terms_on_page:
+            for r in rects_for_term(words, term):
+                page_hls.append({
+                    "term_key": term_key(term),
+                    "rect_pct": rect_to_percent(r, page_w, page_h),
+                })
+        if page_hls:
+            page_highlights[i] = page_hls
+
+    doc.close()
+    return page_labels, page_dims, page_highlights
+
+
+def render_page_image(pdf_path: str, page_index: int, out_path: str, zoom: float = 1.5):
+    """Render a single page to PNG at the given zoom factor."""
+    import fitz
+
+    doc = fitz.open(pdf_path)
+    try:
+        page = doc.load_page(page_index)
+        matrix = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        pix.save(out_path)
+    finally:
+        doc.close()
