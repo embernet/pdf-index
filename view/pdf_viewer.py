@@ -526,94 +526,12 @@ class PDFViewer(QWidget):
             self.page_changed.emit(self.current_page_index)
 
     def _search_variants(self, term):
-        """Return list of word-tuples to try matching for *term*.
-
-        For "Smith, John" we also try the natural-order "John Smith".
-        """
-        import unicodedata
-        term_normalized = unicodedata.normalize("NFKC", term)
-        variants = [term_normalized.split()]
-        if ", " in term_normalized:
-            parts = term_normalized.split(", ", 1)
-            variants.append((parts[1] + " " + parts[0]).split())
-        return variants
+        from model.web_highlights import search_variants
+        return search_variants(term)
 
     def _match_term_at(self, words, start_idx, target_words):
-        """Try to match *target_words* against *words* starting at *start_idx*.
-
-        Each target word is matched against either a single PDF word or a
-        hyphenation-joined pair (PDF word ending in '-' followed by a PDF
-        word starting with a lowercase letter — the same rule the indexer
-        applies to reconstruct line-break-split words like 'Manch-' +
-        'ester' = 'Manchester'). Possessive suffixes ('s, ’s) on the PDF
-        word are stripped before comparison so 'Pemberton's' matches
-        'Pemberton'.
-
-        Returns the list of PDF-word indices consumed by the match, or
-        None if no match is possible.
-        """
-        import unicodedata
-        matched = []
-        pdf_pos = start_idx
-
-        for target_word in target_words:
-            if pdf_pos >= len(words):
-                return None
-
-            target_stripped = self._normalise_word(target_word)
-
-            word_text = unicodedata.normalize("NFKC", words[pdf_pos][4])
-            word_stripped = self._normalise_word(word_text)
-
-            if self._words_equal(word_stripped, target_stripped):
-                matched.append(pdf_pos)
-                pdf_pos += 1
-                continue
-
-            # Hyphenation join: '<prev>-' + '<next>' where next starts lowercase.
-            if (pdf_pos + 1 < len(words)
-                    and word_text.endswith("-")
-                    and words[pdf_pos + 1][4]
-                    and words[pdf_pos + 1][4][0].islower()):
-                joined = (word_text[:-1]
-                          + unicodedata.normalize("NFKC", words[pdf_pos + 1][4]))
-                joined_stripped = self._normalise_word(joined)
-                if self._words_equal(joined_stripped, target_stripped):
-                    matched.append(pdf_pos)
-                    matched.append(pdf_pos + 1)
-                    pdf_pos += 2
-                    continue
-
-            return None
-
-        return matched
-
-    @staticmethod
-    def _normalise_word(word: str) -> str:
-        """Strip surrounding punctuation, curly quotes, and possessive
-        suffix ('s/’s) before comparison.
-
-        PyMuPDF's get_text("words") keeps curly quotes attached to the
-        adjacent words ("‘A", "Method’"), so the strip set has to
-        include ‘ and ’ for entries indexed via the single-quotes rule
-        to match their PDF occurrences.
-        """
-        stripped = word.strip('.,;:!?()[]{}"\'-/‘’')
-        # Possessive: trailing 's or ’s. Apostrophes inside a word
-        # (e.g. O'Donnell) don't count as possessives.
-        if stripped.endswith("'s") or stripped.endswith("’s"):
-            stripped = stripped[:-2]
-        return stripped
-
-    @staticmethod
-    def _words_equal(pdf_word, target_word):
-        """Case-aware word equality: an uppercase target requires an
-        uppercase PDF word, otherwise we compare case-insensitively.
-        """
-        if target_word and target_word[0].isupper():
-            if not pdf_word or not pdf_word[0].isupper():
-                return False
-        return pdf_word.lower() == target_word.lower()
+        from model.web_highlights import match_term_at
+        return match_term_at(words, start_idx, target_words)
 
     def highlight_term(self, term):
         """Highlight all occurrences of term on the current page."""
