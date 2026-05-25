@@ -1514,16 +1514,28 @@ def filter_names(names: List[str]) -> List[str]:
 # N-gram consolidation
 # ---------------------------------------------------------------------------
 
+def _strip_terminal_punct(word: str) -> str:
+    """Lowercase and strip trailing terminal punctuation + possessive
+    suffix used for entry-word comparison. Used by is_contiguous_subsequence
+    so that 'Technique.' compares equal to 'Technique'.
+    """
+    w = word.lower().rstrip(".,;:!?")
+    if w.endswith("'s") or w.endswith("’s"):
+        w = w[:-2]
+    return w
+
+
 def is_contiguous_subsequence(short_words: List[str], long_words: List[str]) -> bool:
     """Check if short_words appears as a contiguous sub-sequence in long_words
-    (case-insensitive)."""
+    (case-insensitive, ignoring trailing terminal punctuation)."""
     s_len = len(short_words)
     l_len = len(long_words)
+    if s_len == 0 or s_len > l_len:
+        return False
+    short_norm = [_strip_terminal_punct(w) for w in short_words]
+    long_norm = [_strip_terminal_punct(w) for w in long_words]
     for start in range(l_len - s_len + 1):
-        if all(
-            short_words[j].lower() == long_words[start + j].lower()
-            for j in range(s_len)
-        ):
+        if short_norm == long_norm[start:start + s_len]:
             return True
     return False
 
@@ -1805,6 +1817,20 @@ def _suppress_substring_duplicates(raw_results: dict) -> None:
     - "Beatrice" on pages {1, 5} when "Beatrice Halloway" is only on
       page 1 — page 5 isn't covered, so "Beatrice" is kept.
 
+    Two suppression triggers, either is sufficient:
+
+    1. Page-subset (conservative): A's pages are fully covered by the
+       union of longer entries that contain A. Used for 1–2-word entries
+       where independent mentions of bare names ("Manchester") are
+       common and must be preserved.
+
+    2. Long-phrase any-overlap: A has ≥ 3 words AND is a contiguous
+       sub-sequence of some longer entry B AND A and B share at least
+       one page. For multi-word phrases, two entries that contain each
+       other and co-occur on a page nearly always come from the same
+       PDF text caught by two different rules (e.g. italic-phrase rule
+       + capitalised-n-gram rule). The shorter form is redundant.
+
     Applied in-place to *raw_results*.
     """
     keys = list(raw_results.keys())
@@ -1820,8 +1846,11 @@ def _suppress_substring_duplicates(raw_results: dict) -> None:
             continue
         a_pages = key_pages[a]
         # Union of pages from every longer entry that contains a as a
-        # contiguous subsequence.
+        # contiguous subsequence. Also track whether any such longer
+        # entry shares a page with a — that's the trigger for the
+        # long-phrase suppression path.
         covering_pages: set = set()
+        any_page_overlap_with_longer = False
         for b in keys:
             if b == a:
                 continue
@@ -1830,8 +1859,17 @@ def _suppress_substring_duplicates(raw_results: dict) -> None:
                 continue
             if not is_contiguous_subsequence(a_words, b_words):
                 continue
-            covering_pages |= key_pages[b]
+            b_pages = key_pages[b]
+            covering_pages |= b_pages
+            if a_pages & b_pages:
+                any_page_overlap_with_longer = True
+
+        # Trigger 1: full page-subset coverage
         if covering_pages and a_pages.issubset(covering_pages):
+            to_remove.add(a)
+            continue
+        # Trigger 2: long phrase contained in a longer entry on a shared page
+        if len(a_words) >= 3 and any_page_overlap_with_longer:
             to_remove.add(a)
 
     for k in to_remove:

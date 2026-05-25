@@ -781,6 +781,52 @@ def test_suppress_substring_duplicates_union_coverage():
     assert "Smith Fisher" in raw
 
 
+def test_suppress_substring_duplicates_terminal_period_on_longer():
+    """Longer entry ending with a period must not block the subsequence
+    match — 'Technique.' vs 'Technique' should compare equal after
+    stripping terminal punctuation."""
+    from model.name_indexer import _suppress_substring_duplicates
+    raw = {
+        "Psychology of Piano Technique": [_occ(1)],
+        "The Psychology of Piano Technique.": [_occ(1)],
+    }
+    _suppress_substring_duplicates(raw)
+    assert "Psychology of Piano Technique" not in raw
+    assert "The Psychology of Piano Technique." in raw
+
+
+def test_suppress_substring_duplicates_long_phrase_any_page_overlap():
+    """A 3+ word phrase that's a contiguous subsequence of a longer
+    entry and shares at least one page should be dropped, even if it
+    has extra pages where the longer form doesn't appear. Such
+    duplicates almost always come from the matcher catching the same
+    text twice via different rules (italic vs capitalised n-gram)."""
+    from model.name_indexer import _suppress_substring_duplicates
+    raw = {
+        # 4-word phrase appearing on p1 (where longer also appears) and p5
+        "Psychology of Piano Technique": [_occ(1), _occ(5)],
+        "The Psychology of Piano Technique": [_occ(1)],
+    }
+    _suppress_substring_duplicates(raw)
+    assert "Psychology of Piano Technique" not in raw
+    assert "The Psychology of Piano Technique" in raw
+
+
+def test_suppress_substring_duplicates_short_phrase_needs_subset():
+    """Two-word entries still need the strict page-subset condition.
+    'Norma Fisher' appearing on a page 'Norma Joan Fisher' doesn't =>
+    keep 'Norma Fisher' (could be the same person referenced both ways)."""
+    from model.name_indexer import _suppress_substring_duplicates
+    raw = {
+        "Norma Fisher": [_occ(1), _occ(5)],
+        "Norma Joan Fisher": [_occ(1)],
+    }
+    _suppress_substring_duplicates(raw)
+    # Norma Fisher has page 5 not covered, so it's preserved
+    assert "Norma Fisher" in raw
+    assert "Norma Joan Fisher" in raw
+
+
 def test_suppress_substring_duplicates_inverted_form():
     """Halloway pages ⊆ "Halloway, Beatrice" pages → drop the standalone."""
     from model.name_indexer import _suppress_substring_duplicates
