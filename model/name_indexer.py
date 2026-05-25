@@ -69,6 +69,28 @@ SENTENCE_END_CHARS = {'.', '?', '!'}
 # fragment the captured phrase.
 TERMINAL_PUNCT_CHARS = set('.?!;:')
 
+# Stopwords that ARE commonly the first word of a proper-noun phrase
+# (place names, organisation names, etc.). When one of these appears at
+# the start of what would otherwise be a name n-gram, admit it
+# tentatively: keep the n-gram if it grows to ≥2 words, drop it if it
+# stays single-word. This captures phrases like "Long Millgate",
+# "New York", "Old Town", "Great Smith Street", "North Yorkshire"
+# without polluting the vocabulary with bare uses of the adjective.
+# Sentence-modifying adverbs ("Therefore", "However") are NOT in this
+# set — they may not seed n-grams.
+NAME_PREFIX_BYPASS_STOPWORDS = {
+    # Size / age / quality adjectives commonly in place names
+    "long", "old", "new", "great", "good", "little", "big", "small",
+    "high", "low",
+    # Directional / positional
+    "upper", "lower", "north", "south", "east", "west", "central",
+    "northern", "southern", "eastern", "western",
+    # Ordinal / sequence
+    "first", "second", "third", "last", "next",
+    # Temporal — appear in event/proper-noun names
+    "early", "late",
+}
+
 # Default stopwords – common English words that should never appear as
 # standalone entries in a name index.  They may still appear as PART of a
 # multi-word name (e.g. "The Guardian", "The Hague") but will never start
@@ -428,6 +450,48 @@ def _peek_first_styled_word_of_line(line):
     return None
 
 
+def _collapse_soft_hyphen_breaks(tokens: List[StyledToken]) -> List[StyledToken]:
+    """Merge ``[word, "\\u00ad", word]`` triples into a single token.
+
+    PyMuPDF emits the soft hyphen (U+00AD, "­") as its own token when a
+    line break splits a word — so a hyphenated wrap like "Reizen-
+    stein" comes out as three tokens. When the continuation starts
+    lowercase, that's a line-break split, not a real hyphenated
+    compound: merge the surrounding word tokens into one, dropping
+    the soft hyphen entirely. Uppercase continuations (e.g.
+    "Anglo-Saxon") are real compounds and left alone.
+
+    The merged token keeps the leading word's style flags. is_all_caps
+    is recomputed against the merged text.
+    """
+    if not tokens:
+        return tokens
+    out: List[StyledToken] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        if (i + 2 < n
+                and tokens[i + 1].text == "­"
+                and tokens[i].text and tokens[i].text[-1:].isalpha()
+                and tokens[i + 2].text and tokens[i + 2].text[:1].islower()):
+            old = tokens[i]
+            merged = old.text + tokens[i + 2].text
+            out.append(StyledToken(
+                text=merged,
+                is_bold=old.is_bold,
+                is_italic=old.is_italic,
+                is_superscript=old.is_superscript,
+                is_all_caps=_is_all_caps_word(merged),
+                from_all_caps_line=old.from_all_caps_line,
+                is_separator=old.is_separator,
+            ))
+            i += 3
+        else:
+            out.append(tokens[i])
+            i += 1
+    return out
+
+
 def extract_styled_tokens(page) -> List[StyledToken]:
     """Extract word-level tokens with bold/italic/superscript flags from a page.
 
@@ -610,6 +674,7 @@ def extract_styled_tokens(page) -> List[StyledToken]:
 
         prev_block = block
 
+    tokens = _collapse_soft_hyphen_breaks(tokens)
     return _merge_split_apostrophe_suffix(tokens)
 
 
@@ -982,9 +1047,20 @@ def extract_names_from_tokens(
             continue
 
         if is_name_word:
-            # Stopwords may extend an existing n-gram but never start one.
+            # Stopwords may extend an existing n-gram. When a stopword
+            # tries to *start* a new n-gram, we admit it tentatively
+            # ONLY for the small subset of stopwords that commonly
+            # appear as the first word of a proper-noun phrase
+            # (NAME_PREFIX_BYPASS_STOPWORDS — "Long", "New", "Old",
+            # "Great", "North", etc.). Other stopwords ("the",
+            # "however", "therefore") still can't start an n-gram.
+            # A single-word tentative n-gram is dropped on flush; a
+            # multi-word one is kept.
             if word_lower in stopwords and not current_ngram:
-                continue
+                if word_lower in NAME_PREFIX_BYPASS_STOPWORDS:
+                    admitted_via_tentative_bypass = True
+                else:
+                    continue
             # Style break: flush the n-gram when italic status changes mid-sequence
             # (e.g. "Adam Gorb's" in plain text followed by italic "Absinthe").
             if current_ngram and token.is_italic != current_ngram_italic:

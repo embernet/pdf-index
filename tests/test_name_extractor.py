@@ -405,6 +405,75 @@ def test_extract_names_filters_sentence_initial_single_word():
     assert "Long" not in names
 
 
+def test_soft_hyphen_collapse_merges_split_word():
+    """PyMuPDF emits a soft hyphen (U+00AD) as its own token when a
+    line break splits a word. The token sequence ["Reizen", "\\xad",
+    "stein"] must collapse to a single "Reizenstein" token so the
+    name indexer sees the full word, not two halves."""
+    from model.name_indexer import _collapse_soft_hyphen_breaks
+    tokens = [
+        StyledToken(text="Franz", is_bold=False, is_italic=False, is_superscript=False),
+        StyledToken(text="Reizen", is_bold=False, is_italic=False, is_superscript=False),
+        StyledToken(text="­", is_bold=False, is_italic=False, is_superscript=False),
+        StyledToken(text="stein", is_bold=False, is_italic=False, is_superscript=False),
+        StyledToken(text="brought", is_bold=False, is_italic=False, is_superscript=False),
+    ]
+    out = _collapse_soft_hyphen_breaks(tokens)
+    texts = [t.text for t in out]
+    assert texts == ["Franz", "Reizenstein", "brought"]
+
+
+def test_soft_hyphen_collapse_preserves_uppercase_continuation():
+    """A soft hyphen followed by a CAPITALISED continuation isn't a
+    word-split — it's a real hyphenated compound (e.g. 'Anglo-Saxon').
+    Don't merge."""
+    from model.name_indexer import _collapse_soft_hyphen_breaks
+    tokens = [
+        StyledToken(text="Anglo", is_bold=False, is_italic=False, is_superscript=False),
+        StyledToken(text="­", is_bold=False, is_italic=False, is_superscript=False),
+        StyledToken(text="Saxon", is_bold=False, is_italic=False, is_superscript=False),
+    ]
+    out = _collapse_soft_hyphen_breaks(tokens)
+    texts = [t.text for t in out]
+    # Leave the structure intact for the caller to decide
+    assert texts == ["Anglo", "­", "Saxon"]
+
+
+def test_extract_names_admits_stopword_prefix_for_multiword_name():
+    """'Long Millgate' is a real Manchester place name. 'long' is in
+    DEFAULT_STOPWORDS (common adjective) but when it precedes another
+    capitalised word it's clearly part of a proper-noun phrase. Admit
+    it tentatively — drop single-word, keep multi-word."""
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("via", "the", "Long", "Millgate", "entrance", ".")
+    ]
+    stopwords = {"long", "new", "old"}
+    names = [n for n, _ in extract_names_from_tokens(
+        tokens, discovery_mode=True, stopwords=stopwords)]
+    assert "Long Millgate" in names
+    # And "Millgate" alone shouldn't leak from this run — pass 1 hands
+    # out candidates; the alone form survives ONLY if it appears
+    # standalone somewhere, not here.
+    assert "Millgate" not in names
+
+
+def test_extract_names_drops_lonely_stopword_prefix():
+    """A stopword-prefix that isn't followed by another capitalised
+    word still gets dropped — we don't want 'Long' as a standalone
+    index entry."""
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("the", "Long", "speech", "ended", ".")
+    ]
+    stopwords = {"long"}
+    names = [n for n, _ in extract_names_from_tokens(
+        tokens, discovery_mode=True, stopwords=stopwords)]
+    assert "Long" not in names
+
+
 def test_extract_names_sentence_initial_stopword_still_filtered():
     """Sentence-initial stopwords like 'Therefore' / 'However' are
     caught by the stopword filter (never start an n-gram) regardless
