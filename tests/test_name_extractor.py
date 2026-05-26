@@ -585,6 +585,55 @@ def _plain_token(text):
     )
 
 
+def test_extract_quoted_treats_open_quote_before_digit_as_apostrophe():
+    """The left curly quote ‘ (U+2018) is sometimes mis-typeset as the
+    apostrophe in year/decade elisions like '19 (= 2019) or '80s. When ‘
+    is immediately followed by a digit-starting token, treat it as an
+    apostrophe rather than an opening quote, so the following prose is
+    not falsely captured.
+
+    Real-world failure (Schools In PREPUB V03, p.xii TOC): '...Chet's ‘19
+    less than 12 months after Leeds ... Chet's ’19 ...' opened on the
+    mis-typeset ‘ before 19, then closed on the later standalone ’ used
+    as the apostrophe before another 19, capturing the intervening TOC
+    text as a bogus quoted phrase.
+    """
+    from model.name_indexer import extract_quoted_phrases
+
+    chets = StyledToken(
+        text="Chet’s", is_bold=False, is_italic=False, is_superscript=False,
+        is_all_caps=False, from_all_caps_line=False,
+    )
+    tokens = (
+        _tokens("Eric Lu performing at", italic=False)
+        + [chets]
+        + [_quote_token("‘")]      # mis-typeset apostrophe in ‘19
+        + [_plain_token("19")]
+        + _tokens("less than 12 months after Leeds", italic=False)
+        + [_plain_token("236")]
+        + [chets]
+        + [_quote_token("’")]      # apostrophe in ’19 — would falsely close
+        + [_plain_token("19")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert out == [], f"expected no captures, got {out!r}"
+
+
+def test_extract_quoted_treats_open_quote_before_decade_as_apostrophe():
+    """‘80s, ‘90s — opening curly quote used as decade-elision apostrophe."""
+    from model.name_indexer import extract_quoted_phrases
+
+    tokens = (
+        _tokens("music from the", italic=False)
+        + [_quote_token("‘")]
+        + [_plain_token("80s")]
+        + _tokens("revival", italic=False)
+        + [_quote_token("’")]
+    )
+    out = extract_quoted_phrases(tokens)
+    assert out == [], f"expected no captures, got {out!r}"
+
+
 def test_extract_quoted_does_not_split_on_year_numbers():
     """Numbers inside a quoted run must NOT split it — the whole quote
     is one literal phrase. Real-world failure from p.272: a long quote

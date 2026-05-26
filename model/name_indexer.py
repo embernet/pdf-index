@@ -1391,7 +1391,7 @@ def extract_quoted_phrases(
         enclosure_words = []
         current.clear()
 
-    for token in tokens:
+    for i, token in enumerate(tokens):
         word = token.text.strip()
         if not word:
             continue
@@ -1399,6 +1399,22 @@ def extract_quoted_phrases(
         # Open / close detection. Both curly variants act as paired
         # delimiters; a stray closing quote without an open is ignored.
         if word == "‘":
+            # Heuristic: ‘ (U+2018) is sometimes mis-typeset as the
+            # apostrophe in year/decade elisions like ‘19 (= 2019) or
+            # ‘80s. When ‘ is immediately followed by a digit-starting
+            # token, treat it as an apostrophe and skip without opening.
+            # Without this, a misuse of ‘ as an apostrophe opens a quoted
+            # run that the next genuine standalone ’ (often another
+            # year-apostrophe) wrongly closes, capturing the intervening
+            # prose as a bogus quoted phrase.
+            next_word = ""
+            for j in range(i + 1, len(tokens)):
+                nxt = tokens[j].text.strip()
+                if nxt:
+                    next_word = nxt
+                    break
+            if next_word and next_word[0].isdigit():
+                continue
             # If a previous enclosure was never closed, drop its state —
             # a fresh ‘ effectively cancels the half-built one rather
             # than letting it leak forward.
