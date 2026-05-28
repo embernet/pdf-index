@@ -74,10 +74,16 @@ def format_page_ref(page_idx: int, page_label: str) -> str:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _to_page_refs(pages: List[Tuple[int, str]]) -> List[PageRef]:
-    """Convert raw (page_idx, page_label) tuples to sorted PageRef list."""
+def _to_page_refs(pages: List[Tuple]) -> List[PageRef]:
+    """Convert raw occurrence tuples to a sorted PageRef list.
+
+    Occurrences are stored as (page_idx, page_label) 2-tuples in legacy
+    data and as (page_idx, page_label, flags) 3-tuples since the
+    style-flag migration. Take the first two fields and ignore the
+    rest.
+    """
     sorted_pages = sorted(pages, key=lambda t: t[0])
-    return [PageRef(page_idx=idx, page_label=label) for idx, label in sorted_pages]
+    return [PageRef(page_idx=t[0], page_label=t[1]) for t in sorted_pages]
 
 
 def _word_tokens(term: str) -> set:
