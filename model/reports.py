@@ -4,10 +4,11 @@ Pure Python — no PyQt6 imports.
 """
 from __future__ import annotations
 
+import bisect
 import re
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -542,6 +543,173 @@ def find_acronym_pairs(raw_results: Dict[str, List[Tuple[int, str]]]) -> ReportS
 
 
 # ---------------------------------------------------------------------------
+# Missing-capitalised-names (sanity check)
+# ---------------------------------------------------------------------------
+
+def find_missing_capitalised_names(
+    raw_results: Dict,
+    pdf_context: Optional[Dict[str, Any]] = None,
+) -> ReportSection:
+    """Sanity-check report: capitalised candidates in the PDF not in the index.
+
+    Rule: a candidate is a mid-sentence single capitalised word, or a run
+    of consecutive capitalised words (the same rule pass-1 discovery
+    uses). Each candidate is compared case-insensitively to the index.
+    Anything missing is reported with the pages it appears on and the
+    couple of index entries it falls between alphabetically, so the user
+    can visually decide whether the miss is a real omission.
+
+    *pdf_context* must contain at least 'pdf_path'. Optional keys:
+    'strategy', 'offset', 'start_page', 'index_front_matter',
+    'exclude_words', 'stopwords'. Without pdf_context the section is
+    returned as not_run (the report needs the PDF to extract
+    candidates).
+    """
+    report_id = "missing_capitalised_names"
+    title = "Missing Capitalised Names (Sanity Check)"
+    description = (
+        "Capitalised candidates found in the PDF — single mid-sentence "
+        "capitalised words or multi-word capitalised runs — that are NOT "
+        "in the index. Use this to spot names that may have been missed. "
+        "Each candidate shows the pages it appears on and the index "
+        "entries it falls between alphabetically."
+    )
+
+    if not pdf_context or not pdf_context.get("pdf_path"):
+        return ReportSection(
+            report_id=report_id, title=title, description=description,
+            findings=[], not_run=True,
+        )
+
+    # Local imports to keep model/reports.py PyQt-free at import time —
+    # name_indexer pulls in fitz/PyMuPDF lazily this way.
+    import fitz
+    from model.name_indexer import (
+        extract_styled_tokens, extract_names_from_tokens, clean_name,
+        filter_names,
+    )
+    from model.indexer import label_for_page
+
+    t0 = time.monotonic()
+
+    pdf_path = pdf_context["pdf_path"]
+    strategy = pdf_context.get("strategy", "logical")
+    offset = pdf_context.get("offset", 0)
+    start_page = pdf_context.get("start_page", 0)
+    index_front_matter = pdf_context.get("index_front_matter", True)
+    exclude_words: Set[str] = pdf_context.get("exclude_words") or set()
+    stopwords: Set[str] = pdf_context.get("stopwords") or set()
+
+    indexed_lower = {k.casefold() for k in (raw_results or {}).keys()}
+
+    candidates: Dict[str, List[Tuple[int, str, str]]] = {}
+
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return ReportSection(
+            report_id=report_id, title=title, description=description,
+            findings=[], not_run=True,
+        )
+
+    try:
+        total_pages = len(doc)
+        front_range = (range(0, start_page)
+                       if index_front_matter and start_page > 0 else range(0, 0))
+        main_range = range(start_page, total_pages)
+        combined_iter = list(front_range) + list(main_range)
+        roman_set = set(front_range)
+
+        for i in combined_iter:
+            page = doc.load_page(i)
+            page_label = label_for_page(
+                page, i + 1, strategy,
+                offset=offset, force_roman=(i in roman_set),
+            )
+            tokens = extract_styled_tokens(page)
+            raw_named = extract_names_from_tokens(
+                tokens, discovery_mode=True,
+                include_bold=False,
+                exclude_words=exclude_words,
+                stopwords=stopwords,
+            )
+            seen_on_page: Set[str] = set()
+            for name, _flags in raw_named:
+                cleaned = clean_name(name)
+                if not cleaned or len(cleaned) <= 1 or cleaned.isdigit():
+                    continue
+                key = cleaned.casefold()
+                if key in seen_on_page:
+                    continue
+                seen_on_page.add(key)
+                candidates.setdefault(cleaned, []).append((i, page_label, cleaned))
+    finally:
+        doc.close()
+
+    # Apply the same filter_names cleanup the indexer applies, so we
+    # don't flag obviously-noise candidates that the indexer would have
+    # dropped anyway.
+    candidate_names = list(candidates.keys())
+    kept = set(filter_names(candidate_names))
+    candidates = {n: occs for n, occs in candidates.items() if n in kept}
+
+    # Missing = capitalised candidate (case-insensitive) not in index.
+    # Collapse case-variant candidates (same lower form) under the most
+    # frequently observed casing.
+    by_lower: Dict[str, Dict[str, List[Tuple[int, str, str]]]] = {}
+    for cased, occs in candidates.items():
+        by_lower.setdefault(cased.casefold(), {}).setdefault(cased, []).extend(occs)
+
+    missing: Dict[str, List[Tuple[int, str]]] = {}
+    for lower, by_case in by_lower.items():
+        if lower in indexed_lower:
+            continue
+        # Pick the casing seen most often (deterministic tie-break by
+        # lexicographic order).
+        canonical = max(
+            by_case.keys(),
+            key=lambda c: (len(by_case[c]), -ord(c[0]) if c else 0),
+        )
+        combined = []
+        for occs in by_case.values():
+            combined.extend((i, label) for i, label, _ in occs)
+        # Dedup pages, sort by page index
+        combined = sorted(set(combined), key=lambda t: t[0])
+        missing[canonical] = combined
+
+    # Alphabetised index list for "near in index" hints.
+    sorted_index = sorted(raw_results.keys() if raw_results else [],
+                          key=lambda s: s.casefold())
+    sorted_index_keys = [s.casefold() for s in sorted_index]
+
+    findings: List[ReportFinding] = []
+    for candidate in sorted(missing.keys(), key=lambda s: s.casefold()):
+        pages = missing[candidate]
+        page_refs = [PageRef(page_idx=i, page_label=label) for i, label in pages]
+
+        # Find nearest index entries (one before, one after, alphabetically).
+        pos = bisect.bisect_left(sorted_index_keys, candidate.casefold())
+        near: List[str] = []
+        if 0 <= pos - 1 < len(sorted_index):
+            near.append(sorted_index[pos - 1])
+        if 0 <= pos < len(sorted_index):
+            near.append(sorted_index[pos])
+        note = ("near in index: " + " | ".join(near)) if near else ""
+
+        findings.append(ReportFinding(
+            terms=[candidate],
+            pages_by_term={candidate: page_refs},
+            note=note,
+        ))
+
+    run_time_ms = (time.monotonic() - t0) * 1000
+    return ReportSection(
+        report_id=report_id, title=title, description=description,
+        findings=findings, run_time_ms=run_time_ms,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Top-level runner
 # ---------------------------------------------------------------------------
 
@@ -555,6 +723,7 @@ _REPORT_ORDER = [
     "dense_entries",
     "shared_page_sets",
     "acronym_pairs",
+    "missing_capitalised_names",
 ]
 
 _NOT_RUN_STUBS = {
@@ -586,6 +755,10 @@ _NOT_RUN_STUBS = {
     "acronym_pairs": ("Acronym / Expansion Pairs",
                       "All-caps terms that may be acronyms for longer entries — "
                       "e.g. ‘BBC’ matching ‘British Broadcasting Corporation’."),
+    "missing_capitalised_names": ("Missing Capitalised Names (Sanity Check)",
+                                   "Capitalised candidates found in the PDF (single "
+                                   "mid-sentence capitalised words or multi-word "
+                                   "capitalised runs) that are NOT in the index."),
 }
 
 
@@ -595,6 +768,7 @@ def run_reports(
     thin_threshold: int = 1,
     dense_threshold: int = 20,
     report_ids: list = None,
+    pdf_context: Optional[Dict[str, Any]] = None,
 ) -> List[ReportSection]:
     """Run selected reports and return them in fixed order.
 
@@ -646,5 +820,7 @@ def run_reports(
             sections.append(find_shared_page_sets(raw_results))
         elif rid == "acronym_pairs":
             sections.append(find_acronym_pairs(raw_results))
+        elif rid == "missing_capitalised_names":
+            sections.append(find_missing_capitalised_names(raw_results, pdf_context))
 
     return sections

@@ -1438,6 +1438,32 @@ class MainController:
         else:
             ctrl.set_output("", "reports")
 
+    def _build_pdf_context(self):
+        """Bundle the PDF path and current indexing config so the
+        sanity-check report can re-extract capitalised candidates
+        directly from the PDF.
+        """
+        if not self.current_pdf_path:
+            return None
+        sidebar = self.view.settings_sidebar
+        offset = sidebar.get_offset()
+        index_from_offset = (
+            sidebar.index_from_offset_chk.isChecked()
+            and sidebar.index_from_offset_chk.isEnabled()
+        )
+        start_page = abs(offset) if (index_from_offset and offset < 0) else 0
+        return {
+            "pdf_path": self.current_pdf_path,
+            "strategy": sidebar.get_strategy(),
+            "offset": offset,
+            "start_page": start_page,
+            "index_front_matter": sidebar.index_front_matter_chk.isChecked(),
+            "exclude_words": {w.lower() for w in self.view.exclude_editor.get_words()},
+            "stopwords": DEFAULT_STOPWORDS | {
+                w.lower() for w in self.view.stopwords_editor.get_words()
+            },
+        }
+
     def _run_all_reports(self, thin_threshold, dense_threshold):
         ctrl = self.view.controls_output
         if not self.last_raw_results:
@@ -1450,6 +1476,7 @@ class MainController:
             include_keywords,
             thin_threshold=thin_threshold,
             dense_threshold=dense_threshold,
+            pdf_context=self._build_pdf_context(),
         )
         ctrl.reports_view.set_reports(self._last_report_sections)
         ctrl.set_output("", "reports")
@@ -1466,6 +1493,7 @@ class MainController:
             thin_threshold=thin_threshold,
             dense_threshold=dense_threshold,
             report_ids=[report_id],
+            pdf_context=self._build_pdf_context(),
         )
         # Merge into cached sections: replace matching report_id, keep others
         if self._last_report_sections is None:
