@@ -57,7 +57,10 @@ def label_for_page(page, physical_page_number: int, strategy: str,
             label = page.get_label()
         except Exception:
             label = ""
-        return label if label else str(physical_page_number)
+        # PDFs without embedded labels (page.get_label() == "") fall back
+        # to the user-configured offset rather than the raw physical page,
+        # so a numeric offset still takes effect in logical mode.
+        return label if label else str(physical_page_number + offset)
     return str(physical_page_number + offset)
 
 
