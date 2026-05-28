@@ -1559,6 +1559,20 @@ def find_known_names_in_tokens(
                 continue
             candidate = " ".join(span)
             canon = known_names_lower.get(candidate.lower())
+            # The pre-pass keeps a possessive 's when it's followed by
+            # another capitalised token, so that titles like "Adam
+            # Gorb's Ballade" stay matchable verbatim. But the
+            # following capitalised tokens may belong to a separate
+            # entity ("Erica Worth's Pianist Magazine" — the magazine
+            # is its own indexed phrase). When the literal candidate
+            # isn't in the vocab, try once more with the trailing
+            # possessive of the LAST span token stripped, so the
+            # canonical owner name ("Erica Worth") still matches.
+            if canon is None and span[-1].endswith(("'s", "’s")):
+                last_stripped = span[-1][:-2]
+                if last_stripped:
+                    alt = " ".join(span[:-1] + [last_stripped])
+                    canon = known_names_lower.get(alt.lower())
             if canon is not None:
                 flags = {"italic": False, "bold": False, "caps": False, "single-quotes": False}
                 for fj in word_flags[i:i + length]:

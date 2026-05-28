@@ -561,6 +561,28 @@ def test_match_finds_canonical_name_through_terminal_possessive():
     assert "Adam Gorb" in found
 
 
+def test_match_canonical_name_when_possessive_followed_by_unrelated_caps():
+    """'Erica Worth’s Pianist Magazine' — the possessive belongs to
+    'Erica Worth' but the next capitalised tokens are an unrelated
+    italic publication title ('Pianist Magazine'). The matcher must
+    still recover 'Erica Worth' even though Worth’s is followed by a
+    capitalised word. Real-world failure on Schools In PREPUB V03 p62
+    where Erica Worth was missing from the index because the matcher
+    preserved Worth’s and looked up the literal 'Erica Worth's' that
+    isn't in the vocab.
+    """
+    from model.name_indexer import find_known_names_in_tokens
+    tokens = [
+        StyledToken(text=w, is_bold=False, is_italic=False, is_superscript=False,
+                    is_all_caps=False, from_all_caps_line=False)
+        for w in ("and", "Erica", "Worth’s", "Pianist", "Magazine", "only")
+    ]
+    vocab = {"Erica Worth"}
+    vocab_lower = {"erica worth": "Erica Worth"}
+    found = [n for n, _ in find_known_names_in_tokens(tokens, vocab, vocab_lower, 5)]
+    assert "Erica Worth" in found
+
+
 def test_extract_quoted_still_closes_on_real_closing_quote():
     """A closing ’ followed by a normal-length capitalised word (the next
     sentence) is NOT a contraction — it must still close the run."""
